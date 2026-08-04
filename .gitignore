@@ -1,0 +1,16 @@
+# Build outputs
+/build/
+/dist/
+/dist_installer/
+
+# C# / .NET
+[Bb]in/
+[Oo]bj/
+
+# VS / user
+.vs/
+*.user
+
+# Local debugging artifacts (error screenshots, scratch)
+/error/
+

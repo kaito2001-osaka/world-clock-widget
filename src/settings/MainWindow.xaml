@@ -1,0 +1,198 @@
+<ui:FluentWindow x:Class="WorldClockSettings.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+        Title="World Clock の設定"
+        Icon="pack://application:,,,/worldclock.ico"
+        Width="560" Height="720"
+        MinWidth="480" MinHeight="560"
+        WindowStartupLocation="CenterScreen"
+        ExtendsContentIntoTitleBar="True"
+        WindowBackdropType="Mica"
+        WindowCornerPreference="Round">
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <ui:TitleBar Grid.Row="0" Title="World Clock の設定">
+            <ui:TitleBar.Icon>
+                <ui:ImageIcon Source="pack://application:,,,/worldclock.ico" />
+            </ui:TitleBar.Icon>
+        </ui:TitleBar>
+
+        <ScrollViewer Grid.Row="1" Padding="20,8,20,8" VerticalScrollBarVisibility="Auto">
+            <StackPanel>
+
+                <!-- Cities -->
+                <TextBlock Text="都市" FontSize="18" FontWeight="SemiBold" Margin="0,4,0,8" />
+                <ui:Card Margin="0,0,0,16">
+                    <StackPanel>
+                        <ListView x:Name="CitiesList" Height="170"
+                                  SelectionMode="Single"
+                                  ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                            <ListView.ItemContainerStyle>
+                                <Style TargetType="ListViewItem">
+                                    <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                                </Style>
+                            </ListView.ItemContainerStyle>
+                            <ListView.ItemTemplate>
+                                <DataTemplate>
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock Grid.Column="0" Text="{Binding Label}"
+                                                   FontWeight="SemiBold" VerticalAlignment="Center" />
+                                        <TextBlock Grid.Column="1" Text="{Binding Tz}"
+                                                   Opacity="0.6" VerticalAlignment="Center"
+                                                   HorizontalAlignment="Right" Margin="12,0,0,0" />
+                                    </Grid>
+                                </DataTemplate>
+                            </ListView.ItemTemplate>
+                        </ListView>
+
+                        <Grid Margin="0,12,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <ComboBox x:Name="CityPicker" Grid.Column="0"
+                                      IsEditable="True" IsTextSearchEnabled="True"
+                                      StaysOpenOnEdit="True"
+                                      ToolTip="主要都市から選ぶか、IANA タイムゾーン名を直接入力できます (例: Asia/Tokyo)" />
+                            <ui:Button Grid.Column="1" x:Name="AddButton" Content="追加"
+                                       Margin="8,0,0,0" Click="OnAddCity" />
+                            <ui:Button Grid.Column="2" x:Name="RemoveButton" Content="削除"
+                                       Margin="8,0,0,0" Click="OnRemoveCity" />
+                        </Grid>
+                        <Grid Margin="0,8,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="選択した都市を上下に並べ替え"
+                                       Opacity="0.6" VerticalAlignment="Center" />
+                            <StackPanel Grid.Column="1" Orientation="Horizontal">
+                                <ui:Button Content="↑" Click="OnMoveUp" Margin="0,0,8,0" />
+                                <ui:Button Content="↓" Click="OnMoveDown" />
+                            </StackPanel>
+                        </Grid>
+                    </StackPanel>
+                </ui:Card>
+
+                <!-- Display -->
+                <TextBlock Text="表示" FontSize="18" FontWeight="SemiBold" Margin="0,4,0,8" />
+                <ui:Card Margin="0,0,0,16">
+                    <StackPanel>
+                        <TextBlock Text="表示モード" FontWeight="SemiBold" Margin="0,0,0,6" />
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+                            <RadioButton x:Name="ModeDigital" Content="デジタル"
+                                         GroupName="Mode" Margin="0,0,16,0"
+                                         Checked="OnModeChanged" />
+                            <RadioButton x:Name="ModeAnalog" Content="アナログ"
+                                         GroupName="Mode" Checked="OnModeChanged" />
+                        </StackPanel>
+                        <ui:InfoBar x:Name="AnalogWarning" Severity="Warning"
+                                    IsClosable="False" IsOpen="False"
+                                    Title="アナログ表示"
+                                    Message="都市数が多いとアナログ盤は窮屈になります。少数の都市での利用を推奨します。"
+                                    Margin="0,4,0,8" />
+
+                        <Separator Margin="0,8" />
+
+                        <TextBlock Text="並べ方" FontWeight="SemiBold" Margin="0,0,0,6" />
+                        <StackPanel Orientation="Horizontal">
+                            <RadioButton x:Name="LayoutVertical" Content="縦並び"
+                                         GroupName="Layout" Margin="0,0,16,0" />
+                            <RadioButton x:Name="LayoutHorizontal" Content="横並び"
+                                         GroupName="Layout" />
+                        </StackPanel>
+
+                        <Separator Margin="0,8" />
+
+                        <ui:ToggleSwitch x:Name="Toggle24"   Content="24時間表示 (オフ = 12時間)" Margin="0,4" />
+                        <ui:ToggleSwitch x:Name="ToggleDate" Content="日付・曜日を表示" Margin="0,4"
+                                         Checked="OnShowDateChanged" Unchecked="OnShowDateChanged" />
+
+                        <StackPanel x:Name="DateFormatPanel" Margin="24,2,0,4">
+                            <TextBlock Text="日付の書式" FontWeight="SemiBold" Margin="0,4,0,4" />
+                            <ComboBox x:Name="DateFormatBox" IsEditable="True"
+                                      SelectionChanged="OnDateFormatChanged"
+                                      ToolTip="プリセットから選ぶか、独自の書式を直接入力できます。" />
+                            <TextBlock x:Name="DatePreview" Margin="0,6,0,0" Opacity="0.85"
+                                       Text="プレビュー: " />
+                            <TextBlock Margin="0,4,0,0" Opacity="0.55" TextWrapping="Wrap"
+                                       Text="トークン: yyyy/yy 年, MMMM/MMM/MM/M 月, dddd/ddd/dd/d 日・曜日, aaaa/aaa 日本語曜日(金/金曜日)。その他の文字 (年 月 日 / - 空白) はそのまま表示。" />
+                        </StackPanel>
+
+                        <ui:ToggleSwitch x:Name="ToggleSeconds" Content="秒を表示" Margin="0,4" />
+
+                        <Separator Margin="0,8" />
+
+                        <TextBlock Text="サイズ" FontWeight="SemiBold" Margin="0,0,0,6" />
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+                            <RadioButton x:Name="SizeSmall"  Content="小" GroupName="Size" Margin="0,0,16,0" />
+                            <RadioButton x:Name="SizeMedium" Content="中" GroupName="Size" Margin="0,0,16,0" />
+                            <RadioButton x:Name="SizeLarge"  Content="大" GroupName="Size" />
+                        </StackPanel>
+
+                        <Separator Margin="0,8" />
+
+                        <Grid Margin="0,4">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Grid.Column="0" Text="不透明度" FontWeight="SemiBold"
+                                       VerticalAlignment="Center" Width="80" />
+                            <Slider Grid.Column="1" x:Name="OpacitySlider"
+                                    Minimum="10" Maximum="100" TickFrequency="5"
+                                    IsSnapToTickEnabled="True"
+                                    ValueChanged="OnOpacityChanged"
+                                    VerticalAlignment="Center" />
+                            <TextBlock Grid.Column="2" x:Name="OpacityValue" Text="85%"
+                                       Width="48" TextAlignment="Right"
+                                       VerticalAlignment="Center" />
+                        </Grid>
+                    </StackPanel>
+                </ui:Card>
+
+                <!-- Behavior -->
+                <TextBlock Text="ウィンドウ" FontSize="18" FontWeight="SemiBold" Margin="0,4,0,8" />
+                <ui:Card Margin="0,0,0,8">
+                    <StackPanel>
+                        <ui:ToggleSwitch x:Name="ToggleTopmost" Content="常に最前面に表示" Margin="0,4" />
+                        <ui:ToggleSwitch x:Name="ToggleLock"    Content="位置を固定 (ドラッグ移動を無効化)" Margin="0,4" />
+                        <ui:ToggleSwitch x:Name="ToggleStartup" Content="Windows 起動時に自動的に開始" Margin="0,4" />
+                    </StackPanel>
+                </ui:Card>
+
+            </StackPanel>
+        </ScrollViewer>
+
+        <!-- Buttons: OK / Cancel / Apply -->
+        <Border Grid.Row="2" Padding="20,12" Background="{DynamicResource ApplicationBackgroundBrush}">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <ui:Button Grid.Column="1" Content="OK" Appearance="Primary"
+                           MinWidth="96" Click="OnOk" />
+                <ui:Button Grid.Column="2" Content="キャンセル" MinWidth="96"
+                           Margin="8,0,0,0" Click="OnCancel" />
+                <ui:Button Grid.Column="3" Content="適用" MinWidth="96"
+                           Margin="8,0,0,0" Click="OnApply" />
+            </Grid>
+        </Border>
+    </Grid>
+</ui:FluentWindow>

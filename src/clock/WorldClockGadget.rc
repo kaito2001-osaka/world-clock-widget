@@ -1,0 +1,35 @@
+#include "resource.h"
+#include <windows.h>
+
+// Icon 101 is the lowest-numbered icon resource, so Explorer and the shell use
+// it as the executable's display icon.
+IDI_APPICON ICON "../../icons/worldclock.ico"
+
+VS_VERSION_INFO VERSIONINFO
+ FILEVERSION    1,0,0,0
+ PRODUCTVERSION 1,0,0,0
+ FILEFLAGSMASK  VS_FFI_FILEFLAGSMASK
+ FILEFLAGS      0
+ FILEOS         VOS_NT_WINDOWS32
+ FILETYPE       VFT_APP
+ FILESUBTYPE    VFT2_UNKNOWN
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904B0"   // U.S. English, Unicode
+        BEGIN
+            VALUE "CompanyName",      "World Clock Gadget"
+            VALUE "FileDescription",  "World Clock Gadget"
+            VALUE "FileVersion",      "1.0.0.0"
+            VALUE "InternalName",     "WorldClockGadget"
+            VALUE "LegalCopyright",   "Copyright (c) 2026 Kaito Ito. MIT License."
+            VALUE "OriginalFilename", "WorldClockGadget.exe"
+            VALUE "ProductName",      "World Clock Gadget"
+            VALUE "ProductVersion",   "1.0.0.0"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200
+    END
+END
