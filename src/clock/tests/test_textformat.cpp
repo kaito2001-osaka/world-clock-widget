@@ -121,3 +121,133 @@ TEST(widen_digits_preserves_length) {
     const std::wstring src = L"12:34:56 AM";
     CHECK_EQ(WidenDigits(src, L'8').size(), src.size());
 }
+
+// ---- worst-case sizing candidates -----------------------------------------
+// The invariant behind the panel-jitter fix: whatever the clock actually
+// shows, some candidate string is at least as long. Length is what the old
+// code got wrong (WidenDigits equalised digit *glyphs* but not digit *counts*),
+// so that is what these assert; the renderer measures the candidates for the
+// remaining glyph-width differences.
+
+namespace {
+
+size_t LongestOf(const std::vector<std::wstring>& v) {
+    size_t n = 0;
+    for (const auto& s : v) n = (std::max)(n, s.size());
+    return n;
+}
+
+} // namespace
+
+TEST(measurement_time_covers_every_hour_and_minute) {
+    for (int hf : { 12, 24 }) {
+        for (bool secs : { false, true }) {
+            Config cfg = Cfg(hf, secs);
+            const size_t worst = LongestOf(MeasurementTimeCandidates(cfg));
+            for (int h = 0; h < 24; ++h) {
+                for (int m : { 0, 9, 59 }) {
+                    for (int s : { 0, 9, 59 }) {
+                        const std::wstring live =
+                            FormatTime(Fields(2026, 6, 12, 5, h, m, s), cfg);
+                        CHECK(live.size() <= worst);
+                    }
+                }
+            }
+        }
+    }
+}
+
+TEST(measurement_time_is_two_digit_hour) {
+    // The actual defect: "9:59" measured narrower than the "10:00" that
+    // followed it, so the panel widened at the rollover.
+    Config c24 = Cfg(24, false);
+    CHECK_EQ(MeasurementTimeCandidates(c24).size(), (size_t)1);
+    CHECK_EQ(MeasurementTimeCandidates(c24)[0], std::wstring(L"23:59"));
+    CHECK(FormatTime(Fields(2026, 6, 12, 5, 9, 59, 0), c24).size()
+          <= MeasurementTimeCandidates(c24)[0].size());
+
+    Config c24s = Cfg(24, true);
+    CHECK_EQ(MeasurementTimeCandidates(c24s)[0], std::wstring(L"23:59:59"));
+}
+
+TEST(measurement_time_covers_both_meridiems) {
+    // AM and PM are different glyphs, so both must be offered for measurement.
+    Config c12 = Cfg(12, false);
+    auto cands = MeasurementTimeCandidates(c12);
+    CHECK_EQ(cands.size(), (size_t)2);
+    CHECK_EQ(cands[0], std::wstring(L"12:59 AM"));
+    CHECK_EQ(cands[1], std::wstring(L"12:59 PM"));
+}
+
+TEST(measurement_date_covers_every_day_of_a_leap_year) {
+    // Sweep all 366 days of a leap year against all 7 weekdays for each
+    // preset: no rendering may ever exceed the longest candidate.
+    const wchar_t* patterns[] = {
+        L"ddd, MMM d", L"dddd, MMMM d", L"yyyy-MM-dd", L"MM/dd/yyyy",
+        L"dd/MM/yyyy", L"M/d", L"d MMM yyyy",
+        L"yyyy年M月d日", L"M月d日(aaa)", L"yyyy年M月d日 aaaa",
+    };
+    static const unsigned kDaysIn[13] =
+        { 0, 31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };   // 2024, a leap year
+
+    for (const wchar_t* p : patterns) {
+        const std::wstring pat(p);
+        const size_t worst = LongestOf(MeasurementDateCandidates(pat));
+        CHECK(worst > 0);
+        for (unsigned mo = 1; mo <= 12; ++mo) {
+            for (unsigned d = 1; d <= kDaysIn[mo]; ++d) {
+                for (unsigned wd = 0; wd < 7; ++wd) {
+                    const std::wstring live =
+                        FormatDatePattern(Fields(2024, mo, d, wd, 0, 0, 0), pat);
+                    CHECK(live.size() <= worst);
+                }
+            }
+        }
+    }
+}
+
+TEST(measurement_date_varies_only_the_tokens_that_matter) {
+    // A pattern with no month or weekday token needs exactly one candidate;
+    // adding each token family widens the sweep. Keeping the list small is
+    // what makes measuring all of them affordable.
+    CHECK_EQ(MeasurementDateCandidates(L"yyyy").size(), (size_t)1);
+    CHECK_EQ(MeasurementDateCandidates(L"MMMM").size(), (size_t)12);
+    CHECK_EQ(MeasurementDateCandidates(L"dddd").size(), (size_t)7);
+    CHECK_EQ(MeasurementDateCandidates(L"aaaa").size(), (size_t)7);
+    CHECK_EQ(MeasurementDateCandidates(L"dddd, MMMM d").size(), (size_t)84);
+}
+
+TEST(measurement_date_includes_the_longest_names) {
+    auto has = [](const std::vector<std::wstring>& v, const std::wstring& needle) {
+        for (const auto& s : v) if (s.find(needle) != std::wstring::npos) return true;
+        return false;
+    };
+    CHECK(has(MeasurementDateCandidates(L"MMMM"), L"September"));
+    CHECK(has(MeasurementDateCandidates(L"dddd"), L"Wednesday"));
+    CHECK(has(MeasurementDateCandidates(L"aaaa"), L"曜日"));
+}
+
+TEST(measurement_date_uses_two_digit_day_and_four_digit_year) {
+    // The day rollover -- "Jun 9" to "Jun 10" -- was the other half of the bug.
+    auto cands = MeasurementDateCandidates(L"yyyy-MM-dd");
+    CHECK_EQ(cands.size(), (size_t)12);
+    CHECK_EQ(cands[0], std::wstring(L"2000-01-28"));
+    auto numeric = MeasurementDateCandidates(L"M/d");
+    CHECK(LongestOf(numeric) >= std::wstring(L"12/28").size());
+}
+
+TEST(measurement_date_preserves_pattern_literals) {
+    // The candidates must keep the separators; eating them would under-measure.
+    for (const auto& s : MeasurementDateCandidates(L"ddd, MMM d"))
+        CHECK(s.find(L", ") != std::wstring::npos);
+    for (const auto& s : MeasurementDateCandidates(L"yyyy-MM-dd"))
+        CHECK(s.find(L"-") != std::wstring::npos);
+    for (const auto& s : MeasurementDateCandidates(L"yyyy年M月d日"))
+        CHECK(s.find(L"年") != std::wstring::npos && s.find(L"日") != std::wstring::npos);
+}
+
+TEST(measurement_date_handles_an_empty_pattern) {
+    auto cands = MeasurementDateCandidates(L"");
+    CHECK_EQ(cands.size(), (size_t)1);
+    CHECK_EQ(cands[0], std::wstring(L""));
+}
