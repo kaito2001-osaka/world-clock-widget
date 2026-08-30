@@ -33,6 +33,7 @@ private:
     void RenderNow();
     void SaveCurrentPosition();
     void StartTimer();
+    void ArmTimer();   // one-shot aimed at the next display boundary
     void ReloadConfig();
     void LaunchSettings();
     void PersistToggle(bool Config::* field, bool value);

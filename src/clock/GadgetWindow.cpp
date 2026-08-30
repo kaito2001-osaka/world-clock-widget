@@ -1,11 +1,15 @@
 #include "GadgetWindow.hpp"
+#include "ConfigWatch.hpp"
 #include "Startup.hpp"
+#include "TimerCadence.hpp"
+#include "WindowPlacement.hpp"
 #include "resource.h"
 
 #include <shellapi.h>
 #include <string>
 #include <chrono>
 #include <ctime>
+#include <vector>
 
 namespace {
 
@@ -28,6 +32,21 @@ std::wstring ExeDir() {
     std::wstring p(path);
     auto pos = p.find_last_of(L"\\/");
     return pos == std::wstring::npos ? L"" : p.substr(0, pos + 1);
+}
+
+// Work area of every attached monitor, for validating a restored position.
+BOOL CALLBACK CollectWorkArea(HMONITOR mon, HDC, LPRECT, LPARAM userData) {
+    MONITORINFO mi{}; mi.cbSize = sizeof(mi);
+    if (GetMonitorInfoW(mon, &mi))
+        reinterpret_cast<std::vector<RECT>*>(userData)->push_back(mi.rcWork);
+    return TRUE;
+}
+
+std::vector<RECT> MonitorWorkAreas() {
+    std::vector<RECT> areas;
+    EnumDisplayMonitors(nullptr, nullptr, &CollectWorkArea,
+                        reinterpret_cast<LPARAM>(&areas));
+    return areas;
 }
 
 } // namespace
@@ -61,11 +80,23 @@ bool GadgetWindow::Create(HINSTANCE hInst) {
     DWORD style   = WS_POPUP;
     DWORD exStyle = WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE;
 
+    // The real size arrives with the first UpdateLayeredWindow; this is only
+    // the seed the placement check reasons about.
+    const int kSeedW = 240, kSeedH = 200;
     int x = state_.hasPosition ? state_.windowX : 1200;
     int y = state_.hasPosition ? state_.windowY : 80;
 
+    // A saved position can be off-screen now: a monitor was unplugged, the
+    // laptop left its dock, the resolution shrank. This window has no taskbar
+    // button and no Alt-Tab entry, so off-screen means unrecoverable -- pull it
+    // back onto a monitor that exists.
+    RECT placed = ClampToVisibleArea(RECT{ x, y, x + kSeedW, y + kSeedH },
+                                     MonitorWorkAreas());
+    x = placed.left;
+    y = placed.top;
+
     hwnd_ = CreateWindowExW(exStyle, kClassName, L"World Clock",
-                            style, x, y, 240, 200,
+                            style, x, y, kSeedW, kSeedH,
                             nullptr, nullptr, hInst, nullptr);
     if (!hwnd_) return false;
 
@@ -114,6 +145,7 @@ LRESULT GadgetWindow::HandleMessage(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
                 lastMinute_ = utc.tm_min;
                 RenderNow();
             }
+            ArmTimer();   // re-aim at the next boundary
             return 0;
         }
 
@@ -186,8 +218,17 @@ void GadgetWindow::SaveCurrentPosition() {
 }
 
 void GadgetWindow::StartTimer() {
-    // 1s cadence; rendering itself is gated to the displayed resolution.
-    SetTimer(hwnd_, TIMER_ID, 1000, nullptr);
+    ArmTimer();
+}
+
+// A fixed 1000 ms SetTimer drifts: WM_TIMER is only delivered when the queue
+// is empty, it coalesces, and its period is always >= the one requested. Two
+// fires then land inside the same second, the redraw gate skips one, and the
+// clock shows that second twice before jumping by two. Re-arming to the next
+// boundary keeps every fire just after a real rollover.
+void GadgetWindow::ArmTimer() {
+    const UINT ms = MillisecondsToNextBoundary(std::chrono::system_clock::now(), true);
+    SetTimer(hwnd_, TIMER_ID, ms, nullptr);
 }
 
 void GadgetWindow::ReloadConfig() {
@@ -292,21 +333,23 @@ void GadgetWindow::WatchThreadProc() {
         DWORD transferred = 0;
         if (!GetOverlappedResult(h, &ov, &transferred, FALSE)) break;
 
-        // Look for config.json in the change records.
-        bool hitConfig = false;
-        BYTE* p = buf;
-        while (transferred > 0) {
-            auto* fni = reinterpret_cast<FILE_NOTIFY_INFORMATION*>(p);
-            std::wstring name(fni->FileName, fni->FileNameLength / sizeof(wchar_t));
-            if (name.find(L"config.json") != std::wstring::npos) hitConfig = true;
-            if (fni->NextEntryOffset == 0) break;
-            p += fni->NextEntryOffset;
-        }
-        if (hitConfig) {
+        // Only the config file itself. Matching a substring would also fire on
+        // the "config.json.tmp" that both writers replace through, turning one
+        // save into several reloads -- the first of them reading the file
+        // before the replace has landed.
+        if (ContainsConfigChange(buf, transferred)) {
             Sleep(80); // let the writer finish the atomic replace
             PostMessageW(hwnd_, WM_APP_RELOAD, 0, 0);
         }
     }
-    CloseHandle(ov.hEvent);
+    // The loop can exit with a ReadDirectoryChangesW still pending, and both
+    // `ov` and `buf` are stack locals of this frame. Wait for the cancellation
+    // to land before returning, or the kernel writes into a frame that is
+    // already gone. The directory handle closes first; closing the event while
+    // an I/O could still signal it risks signalling a recycled handle.
+    CancelIoEx(h, &ov);
+    DWORD cancelled = 0;
+    GetOverlappedResult(h, &ov, &cancelled, TRUE);
     CloseHandle(h);
+    CloseHandle(ov.hEvent);
 }

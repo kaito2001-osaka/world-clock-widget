@@ -178,10 +178,15 @@ WindowState LoadState() {
     try {
         json::Value root = json::parse(text);
         if (!root.isObject()) return st;
+        // Only treat this as a saved position when both coordinates are
+        // really there; getInt would otherwise hand back its own default and
+        // we would restore to a position nobody ever saved.
+        const json::Value* px = root.find("windowX");
+        const json::Value* py = root.find("windowY");
         st.windowX = root.getInt("windowX", st.windowX);
         st.windowY = root.getInt("windowY", st.windowY);
         st.monitor = root.getString("monitor", "");
-        st.hasPosition = true;
+        st.hasPosition = px && py;
     } catch (...) {}
     return st;
 }
