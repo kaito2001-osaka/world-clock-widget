@@ -89,9 +89,7 @@ static LayoutDir ParseLayout(const std::string& s) {
     return (s == "horizontal") ? LayoutDir::Horizontal : LayoutDir::Vertical;
 }
 
-Config LoadConfig() {
-    std::string text;
-    if (!ReadFileUtf8(ConfigPath(), text)) return DefaultConfig();
+Config ConfigFromJson(const std::string& text) {
     try {
         json::Value root = json::parse(text);
         if (!root.isObject()) return DefaultConfig();
@@ -126,6 +124,12 @@ Config LoadConfig() {
     } catch (...) {
         return DefaultConfig();
     }
+}
+
+Config LoadConfig() {
+    std::string text;
+    if (!ReadFileUtf8(ConfigPath(), text)) return DefaultConfig();
+    return ConfigFromJson(text);
 }
 
 static std::string ModeStr(DisplayMode m) { return m == DisplayMode::Analog ? "analog" : "digital"; }
