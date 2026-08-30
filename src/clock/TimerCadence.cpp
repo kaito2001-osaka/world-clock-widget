@@ -18,3 +18,7 @@ UINT MillisecondsToNextBoundary(system_clock::time_point now, bool secondsResolu
     // with 0 would fire immediately and spin.
     return static_cast<UINT>(period - into);
 }
+
+UINT MillisecondsToNextTick(system_clock::time_point now, const Config& cfg) {
+    return MillisecondsToNextBoundary(now, cfg.showSeconds);
+}

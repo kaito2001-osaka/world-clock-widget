@@ -99,3 +99,76 @@ TEST(cadence_handles_pre_epoch_instants) {
         CHECK(min > 0 && min <= 60000u);
     }
 }
+
+// ---- cadence follows the displayed resolution -----------------------------
+
+namespace {
+
+Config WithSeconds(bool on) {
+    Config c;
+    c.showSeconds = on;
+    return c;
+}
+
+// Replay the actual re-arm loop -- wake, advance by whatever interval was
+// returned, wake again -- and count the wakeups over `span`.
+int WakeupsOver(minutes span, const Config& cfg, long long startOffsetMs) {
+    auto now = AtOffset(startOffsetMs);
+    const auto end = now + span;
+    int wakeups = 0;
+    while (now < end) {
+        now += milliseconds{ MillisecondsToNextTick(now, cfg) };
+        ++wakeups;
+    }
+    return wakeups;
+}
+
+} // namespace
+
+TEST(cadence_tick_picks_the_boundary_from_the_config) {
+    for (long long ms = 0; ms < 60000; ms += 1013) {
+        CHECK_EQ(MillisecondsToNextTick(AtOffset(ms), WithSeconds(true)),
+                 MillisecondsToNextBoundary(AtOffset(ms), true));
+        CHECK_EQ(MillisecondsToNextTick(AtOffset(ms), WithSeconds(false)),
+                 MillisecondsToNextBoundary(AtOffset(ms), false));
+    }
+}
+
+TEST(cadence_hiding_seconds_sleeps_a_whole_minute) {
+    // The default configuration. Waking once a second to redraw a minute hand
+    // is 59 wasted wakeups out of every 60.
+    Config dflt;
+    CHECK_EQ(dflt.showSeconds, false);
+    CHECK_EQ(MillisecondsToNextTick(AtOffset(0), dflt), 60000u);
+    CHECK_EQ(MillisecondsToNextTick(AtOffset(1000), dflt), 59000u);
+}
+
+TEST(cadence_wakeup_count_drops_from_60_per_minute_to_1) {
+    // The whole point of the change, measured on the real re-arm loop.
+    CHECK_EQ(WakeupsOver(minutes{ 1 }, WithSeconds(false), 0), 1);
+    CHECK_EQ(WakeupsOver(minutes{ 1 }, WithSeconds(true), 0), 60);
+
+    CHECK_EQ(WakeupsOver(minutes{ 60 }, WithSeconds(false), 0), 60);
+    CHECK_EQ(WakeupsOver(minutes{ 60 }, WithSeconds(true), 0), 3600);
+}
+
+TEST(cadence_wakeup_count_holds_from_any_starting_offset) {
+    // Starting mid-period, the first interval is short and every one after it
+    // is a full period, so the final wakeup lands just past the window: one
+    // extra at most, never fewer, and never a burst.
+    for (long long start : { 0LL, 1LL, 250LL, 999LL, 30000LL, 59999LL }) {
+        const int mins = WakeupsOver(minutes{ 60 }, WithSeconds(false), start);
+        CHECK(mins >= 60 && mins <= 61);
+        const int secs = WakeupsOver(minutes{ 60 }, WithSeconds(true), start);
+        CHECK(secs >= 3600 && secs <= 3601);
+        // The reduction itself, whatever the phase.
+        CHECK(secs / mins >= 59);
+    }
+}
+
+TEST(cadence_showing_seconds_still_ticks_every_second) {
+    // The reduction must not cost resolution when seconds are on display.
+    Config on = WithSeconds(true);
+    for (long long ms = 0; ms < 60000; ms += 331)
+        CHECK(MillisecondsToNextTick(AtOffset(ms), on) <= 1000u);
+}
