@@ -72,3 +72,57 @@ std::wstring WidenDigits(std::wstring s, wchar_t wide) {
         if (ch >= L'0' && ch <= L'9') ch = wide;
     return s;
 }
+
+// ---- worst-case strings for sizing -----------------------------------------
+
+std::vector<std::wstring> MeasurementTimeCandidates(const Config& cfg) {
+    LocalTimeFields f;
+    f.valid = true;
+    f.year = 2000; f.month = 12; f.day = 28; f.weekday = 3;
+    f.minute = 59; f.second = 59;
+
+    std::vector<std::wstring> out;
+    if (cfg.hourFormat == 12) {
+        // 12-hour never exceeds two digits, but AM and PM are different glyphs.
+        f.hour = 0;  out.push_back(FormatTime(f, cfg));   // 12:59 AM
+        f.hour = 12; out.push_back(FormatTime(f, cfg));   // 12:59 PM
+    } else {
+        f.hour = 23; out.push_back(FormatTime(f, cfg));   // 23:59
+    }
+    return out;
+}
+
+std::vector<std::wstring> MeasurementDateCandidates(const std::wstring& pat) {
+    // Which token families change the width? A month token is sensitive to the
+    // month whether it is numeric (1 vs 12) or a name (May vs September), so a
+    // run of any length counts. A `d` run is only weekday-sensitive from three
+    // characters up -- `d` and `dd` are the day number, and the day is pinned
+    // below. Sweeping weekdays for those would just measure duplicates.
+    bool varyMonth = false, varyWeekday = false;
+    for (size_t i = 0; i < pat.size();) {
+        const wchar_t ch = pat[i];
+        size_t run = 1;
+        while (i + run < pat.size() && pat[i + run] == ch) ++run;
+        if (ch == L'M') varyMonth = true;
+        else if (ch == L'a') varyWeekday = true;
+        else if (ch == L'd' && run >= 3) varyWeekday = true;
+        i += run;
+    }
+
+    LocalTimeFields f;
+    f.valid = true;
+    f.year = 2000;   // four digits for yyyy, two for yy
+    f.day = 28;      // two digits for d and dd
+
+    std::vector<std::wstring> out;
+    const unsigned lastMonth = varyMonth ? 12u : 1u;
+    const unsigned lastWeekday = varyWeekday ? 6u : 0u;
+    for (unsigned mo = 1; mo <= lastMonth; ++mo) {
+        for (unsigned wd = 0; wd <= lastWeekday; ++wd) {
+            f.month = mo;
+            f.weekday = wd;
+            out.push_back(FormatDatePattern(f, pat));
+        }
+    }
+    return out;
+}

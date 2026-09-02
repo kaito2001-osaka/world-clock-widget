@@ -67,8 +67,8 @@ bool Renderer::Init(HWND hwnd) {
                                 IID_PPV_ARGS(wicFactory_.GetAddressOf()))))
         return false;
 
-    CreateTextFormats();
-    RecomputeLayout(system_clock::now());
+    if (!CreateTextFormats()) return false;
+    RecomputeLayout();
     return true;
 }
 
@@ -87,68 +87,90 @@ void Renderer::Shutdown() {
 void Renderer::SetConfig(const Config& cfg) {
     cfg_ = cfg;
     CreateTextFormats();
-    RecomputeLayout(system_clock::now());
+    RecomputeLayout();
 }
 
 void Renderer::OnDpiChanged(UINT dpi) {
     dpi_ = dpi ? dpi : 96;
     CreateTextFormats();
-    RecomputeLayout(system_clock::now());
+    RecomputeLayout();
 }
 
-void Renderer::CreateTextFormats() {
+bool Renderer::CreateTextFormats() {
     fmtLabel_.Reset(); fmtTime_.Reset(); fmtDate_.Reset();
     auto make = [&](float sizeDip, DWRITE_FONT_WEIGHT w, ComPtr<IDWriteTextFormat>& out) {
-        dwFactory_->CreateTextFormat(L"Segoe UI", nullptr, w, DWRITE_FONT_STYLE_NORMAL,
-                                     DWRITE_FONT_STRETCH_NORMAL, sizeDip, L"", &out);
+        return SUCCEEDED(dwFactory_->CreateTextFormat(
+            L"Segoe UI", nullptr, w, DWRITE_FONT_STYLE_NORMAL,
+            DWRITE_FONT_STRETCH_NORMAL, sizeDip, L"", &out));
     };
-    make(Sc(13.f), DWRITE_FONT_WEIGHT_SEMI_BOLD, fmtLabel_);
-    make(Sc(26.f), DWRITE_FONT_WEIGHT_LIGHT,     fmtTime_);
-    make(Sc(11.f), DWRITE_FONT_WEIGHT_NORMAL,    fmtDate_);
+    // A null format would reach DrawTextW and, in the analog path,
+    // fmtLabel_->SetTextAlignment as a null dereference. Fail cleanly instead.
+    if (!make(Sc(13.f), DWRITE_FONT_WEIGHT_SEMI_BOLD, fmtLabel_)) return false;
+    if (!make(Sc(26.f), DWRITE_FONT_WEIGHT_LIGHT,     fmtTime_))  return false;
+    if (!make(Sc(11.f), DWRITE_FONT_WEIGHT_NORMAL,    fmtDate_))  return false;
 
     // Find the widest digit once per format change (same family throughout, so
     // one probe covers every text style we draw).
     widestDigit_ = L'0';
-    if (fmtTime_) {
+    {
         float best = -1.f;
         for (wchar_t d = L'0'; d <= L'9'; ++d) {
             auto m = Measure(dwFactory_.Get(), fmtTime_.Get(), std::wstring(1, d));
             if (m.width > best) { best = m.width; widestDigit_ = d; }
         }
     }
+
+    RecomputeWorstCaseSizes();
+    return true;
+}
+
+// The size a time / date line could ever need, measured across every string
+// the formatter could produce. Sizing from the live string instead would grow
+// and shrink the panel as "9:59" becomes "10:00" or "Jun 9" becomes "Jun 10".
+// Depends only on the config and the font, so it is computed here rather than
+// per frame -- the date list runs to 84 candidates.
+void Renderer::RecomputeWorstCaseSizes() {
+    auto widest = [&](IDWriteTextFormat* fmt, const std::vector<std::wstring>& candidates) {
+        D2D1_SIZE_F best{ 0.f, 0.f };
+        for (const std::wstring& s : candidates) {
+            auto m = Measure(dwFactory_.Get(), fmt, WidenDigits(s, widestDigit_));
+            best.width  = (std::max)(best.width, m.width);
+            best.height = (std::max)(best.height, m.height);
+        }
+        return best;
+    };
+    worstTime_ = widest(fmtTime_.Get(), MeasurementTimeCandidates(cfg_));
+    worstDate_ = cfg_.showDate
+               ? widest(fmtDate_.Get(), MeasurementDateCandidates(ToW(cfg_.dateFormat)))
+               : D2D1_SIZE_F{ 0.f, 0.f };
 }
 
 // Content size of one city block (label/time/date for digital; face/date/label
-// for analog). Heights/widths are in DIPs.
-D2D1_SIZE_F Renderer::MeasureBlock(const CityEntry& c, const LocalTimeFields& lt) {
+// for analog). Heights/widths are in DIPs. Independent of the current time --
+// that is what keeps the panel from resizing as the clock ticks over.
+D2D1_SIZE_F Renderer::MeasureBlock(const CityEntry& c) {
     const float lineGap = Sc(2.f);
+    auto ml = Measure(dwFactory_.Get(), fmtLabel_.Get(), ToW(c.label));
+
     if (cfg_.displayMode == DisplayMode::Analog) {
         const float faceD = Sc(80.f);
         float w = faceD, h = faceD;
         if (cfg_.showDate) {
-            auto md = Measure(dwFactory_.Get(), fmtDate_.Get(),
-                              WidenDigits(FormatDatePattern(lt, ToW(cfg_.dateFormat)), widestDigit_));
-            w = (std::max)(w, md.width); h += lineGap + md.height;
+            w = (std::max)(w, worstDate_.width); h += lineGap + worstDate_.height;
         }
-        auto ml = Measure(dwFactory_.Get(), fmtLabel_.Get(), ToW(c.label));
         w = (std::max)(w, ml.width); h += lineGap + ml.height;
         return { w, h };
     }
     // Digital
-    auto mLabel = Measure(dwFactory_.Get(), fmtLabel_.Get(), ToW(c.label));
-    auto mTime  = Measure(dwFactory_.Get(), fmtTime_.Get(),
-                          WidenDigits(FormatTime(lt, cfg_), widestDigit_));
-    float w = (std::max)(mLabel.width, mTime.width);
-    float h = mLabel.height + lineGap + mTime.height;
+    float w = (std::max)(ml.width, worstTime_.width);
+    float h = ml.height + lineGap + worstTime_.height;
     if (cfg_.showDate) {
-        auto mDate = Measure(dwFactory_.Get(), fmtDate_.Get(),
-                             WidenDigits(FormatDatePattern(lt, ToW(cfg_.dateFormat)), widestDigit_));
-        w = (std::max)(w, mDate.width); h += lineGap + mDate.height;
+        w = (std::max)(w, worstDate_.width); h += lineGap + worstDate_.height;
     }
     return { w, h };
 }
 
-void Renderer::RecomputeLayout(system_clock::time_point now) {
+void Renderer::RecomputeLayout() {
     if (!dwFactory_) return;
     const float pad = Sc(14.f);
     const float cityGap = Sc(12.f);
@@ -163,8 +185,7 @@ void Renderer::RecomputeLayout(system_clock::time_point now) {
     float along = 0.f;   // sum of sizes along the stacking axis (+ gaps)
     float cross = 0.f;   // max size on the other axis
     for (size_t i = 0; i < cfg_.cities.size(); ++i) {
-        auto lt = ComputeLocal(cfg_.cities[i].tz, now);
-        auto s = MeasureBlock(cfg_.cities[i], lt);
+        auto s = MeasureBlock(cfg_.cities[i]);
         float a = horiz ? s.width : s.height;   // along the stacking direction
         float b = horiz ? s.height : s.width;   // across
         along += a;
@@ -224,10 +245,9 @@ bool Renderer::EnsureSurface(int w, int h) {
 }
 
 void Renderer::Render(system_clock::time_point now) {
-    // Re-measure every frame against the instant we are about to draw. The
-    // window is sized from desired_, so a stale value (e.g. computed when the
-    // hour was still one digit) would clip the trailing column.
-    RecomputeLayout(now);
+    // Block sizes are worst-case and depend only on the config, DPI and font,
+    // so the layout is already current; recomputing per frame would only
+    // re-derive the same numbers.
 
     int w = desired_.cx, h = desired_.cy;
     if (!EnsureSurface(w, h) || !rt_) return;
@@ -298,9 +318,8 @@ void Renderer::DrawDigital(ID2D1RenderTarget* rt, system_clock::time_point now,
     std::vector<D2D1_SIZE_F> sizes;
     float maxW = 0.f;
     for (auto& c : cfg_.cities) {
-        auto lt = ComputeLocal(c.tz, now);
-        auto s = MeasureBlock(c, lt);
-        lts.push_back(lt); sizes.push_back(s);
+        auto s = MeasureBlock(c);
+        lts.push_back(ComputeLocal(c.tz, now)); sizes.push_back(s);
         maxW = (std::max)(maxW, s.width);
     }
 
@@ -362,8 +381,7 @@ void Renderer::DrawAnalog(ID2D1RenderTarget* rt, system_clock::time_point now,
     std::vector<D2D1_SIZE_F> sizes;
     float maxW = 0.f;
     for (auto& c : cfg_.cities) {
-        auto lt = ComputeLocal(c.tz, now);
-        lts.push_back(lt); auto s = MeasureBlock(c, lt);
+        lts.push_back(ComputeLocal(c.tz, now)); auto s = MeasureBlock(c);
         sizes.push_back(s); maxW = (std::max)(maxW, s.width);
     }
 

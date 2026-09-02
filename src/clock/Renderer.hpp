@@ -52,15 +52,22 @@ private:
     // Widest digit glyph in the current font; measuring against it keeps the
     // panel from resizing every second as the digits change.
     wchar_t widestDigit_ = L'0';
+    // Largest a time / date line could ever be with this config, DPI and font.
+    // Sizing blocks from these rather than from the live string is what stops
+    // the panel jumping at the 9 -> 10 hour and day rollovers.
+    D2D1_SIZE_F worstTime_ = { 0.f, 0.f };
+    D2D1_SIZE_F worstDate_ = { 0.f, 0.f };
 
     bool EnsureSurface(int w, int h);
-    void CreateTextFormats();
-    void RecomputeLayout(std::chrono::system_clock::time_point now);
+    bool CreateTextFormats();       // false when a font could not be created
+    void RecomputeWorstCaseSizes();
+    void RecomputeLayout();
     float Sc(float logical) const;  // logical px -> device px
 
     // Content size (DIP) of one city block in the current mode (digital text
     // stack, or analog face + date + label). Used by both layout and drawing.
-    D2D1_SIZE_F MeasureBlock(const CityEntry& c, const struct LocalTimeFields& lt);
+    // Worst-case, so it does not change as the clock ticks.
+    D2D1_SIZE_F MeasureBlock(const CityEntry& c);
 
     void DrawDigital(ID2D1RenderTarget* rt, std::chrono::system_clock::time_point now,
                      ID2D1SolidColorBrush* label, ID2D1SolidColorBrush* time,
