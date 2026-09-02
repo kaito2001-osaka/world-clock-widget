@@ -11,8 +11,11 @@ option(WORLDCLOCK_BUILD_TESTS "Build the unit tests" ON)
 # they are bound to a render target and an HWND.
 add_library(worldclock_core STATIC
     Config.cpp
+    ConfigWatch.cpp
     TextFormat.cpp
     TimeEngine.cpp
+    TimerCadence.cpp
+    WindowPlacement.cpp
 )
 target_include_directories(worldclock_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_definitions(worldclock_core PUBLIC

@@ -2,9 +2,12 @@
 add_executable(WorldClockTests
     test_framework.cpp
     test_config.cpp
+    test_configwatch.cpp
     test_json.cpp
     test_textformat.cpp
     test_timeengine.cpp
+    test_timercadence.cpp
+    test_windowplacement.cpp
 )
 
 target_link_libraries(WorldClockTests PRIVATE worldclock_core)
