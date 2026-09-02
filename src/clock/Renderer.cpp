@@ -25,12 +25,10 @@ std::wstring ToW(const std::string& s) {
     return w;
 }
 
-// Measure a string. `width` accounts for glyph overhang (ink that spills past
-// the advance width) so a layout rect built from it never clips the text.
-D2D1_SIZE_F Measure(IDWriteFactory* dw, IDWriteTextFormat* fmt, const std::wstring& s) {
-    ComPtr<IDWriteTextLayout> layout;
-    if (FAILED(dw->CreateTextLayout(s.c_str(), (UINT32)s.size(), fmt, 4000.f, 4000.f, &layout)))
-        return { 0, 0 };
+// Size of a laid-out string. `width` accounts for glyph overhang (ink that
+// spills past the advance width) so a rect built from it never clips the text.
+D2D1_SIZE_F LayoutSize(IDWriteTextLayout* layout) {
+    if (!layout) return { 0.f, 0.f };
     DWRITE_TEXT_METRICS m{};
     layout->GetMetrics(&m);
     float w = m.widthIncludingTrailingWhitespace;
@@ -40,6 +38,14 @@ D2D1_SIZE_F Measure(IDWriteFactory* dw, IDWriteTextFormat* fmt, const std::wstri
         w += o.right;   // right-side ink overhang (italics, wide glyph bearings)
 
     return { std::ceil(w), m.height };
+}
+
+// Measure a string with no intention of keeping the layout around.
+D2D1_SIZE_F Measure(IDWriteFactory* dw, IDWriteTextFormat* fmt, const std::wstring& s) {
+    ComPtr<IDWriteTextLayout> layout;
+    if (FAILED(dw->CreateTextLayout(s.c_str(), (UINT32)s.size(), fmt, 4000.f, 4000.f, &layout)))
+        return { 0, 0 };
+    return LayoutSize(layout.Get());
 }
 
 } // namespace
@@ -69,16 +75,23 @@ bool Renderer::Init(HWND hwnd) {
 
     if (!CreateTextFormats()) return false;
     RecomputeLayout();
+    RebuildVisuals();
     return true;
 }
 
 void Renderer::Shutdown() {
+    visuals_.clear();
+    sizes_.clear();
+    lts_.clear();
+    ReleaseDeviceResources();
     if (memDC_) {
         if (oldBmp_) SelectObject(memDC_, oldBmp_);
         DeleteDC(memDC_);
         memDC_ = nullptr;
     }
     if (dib_) { DeleteObject(dib_); dib_ = nullptr; }
+    bits_ = nullptr;              // the DIB it pointed into is gone
+    surface_ = { 0, 0 };
     fmtLabel_.Reset(); fmtTime_.Reset(); fmtDate_.Reset();
     rt_.Reset(); wicBitmap_.Reset(); wicFactory_.Reset();
     dwFactory_.Reset(); d2dFactory_.Reset();
@@ -88,12 +101,14 @@ void Renderer::SetConfig(const Config& cfg) {
     cfg_ = cfg;
     CreateTextFormats();
     RecomputeLayout();
+    RebuildVisuals();
 }
 
 void Renderer::OnDpiChanged(UINT dpi) {
     dpi_ = dpi ? dpi : 96;
     CreateTextFormats();
     RecomputeLayout();
+    RebuildVisuals();
 }
 
 bool Renderer::CreateTextFormats() {
@@ -103,8 +118,8 @@ bool Renderer::CreateTextFormats() {
             L"Segoe UI", nullptr, w, DWRITE_FONT_STYLE_NORMAL,
             DWRITE_FONT_STRETCH_NORMAL, sizeDip, L"", &out));
     };
-    // A null format would reach DrawTextW and, in the analog path,
-    // fmtLabel_->SetTextAlignment as a null dereference. Fail cleanly instead.
+    // A null format would reach the draw calls, and in the analog path a text
+    // alignment call, as a null dereference. Fail cleanly instead.
     if (!make(Sc(13.f), DWRITE_FONT_WEIGHT_SEMI_BOLD, fmtLabel_)) return false;
     if (!make(Sc(26.f), DWRITE_FONT_WEIGHT_LIGHT,     fmtTime_))  return false;
     if (!make(Sc(11.f), DWRITE_FONT_WEIGHT_NORMAL,    fmtDate_))  return false;
@@ -130,6 +145,8 @@ bool Renderer::CreateTextFormats() {
 // Depends only on the config and the font, so it is computed here rather than
 // per frame -- the date list runs to 84 candidates.
 void Renderer::RecomputeWorstCaseSizes() {
+    dateFormatW_ = ToW(cfg_.dateFormat);
+
     auto widest = [&](IDWriteTextFormat* fmt, const std::vector<std::wstring>& candidates) {
         D2D1_SIZE_F best{ 0.f, 0.f };
         for (const std::wstring& s : candidates) {
@@ -141,16 +158,16 @@ void Renderer::RecomputeWorstCaseSizes() {
     };
     worstTime_ = widest(fmtTime_.Get(), MeasurementTimeCandidates(cfg_));
     worstDate_ = cfg_.showDate
-               ? widest(fmtDate_.Get(), MeasurementDateCandidates(ToW(cfg_.dateFormat)))
+               ? widest(fmtDate_.Get(), MeasurementDateCandidates(dateFormatW_))
                : D2D1_SIZE_F{ 0.f, 0.f };
 }
 
 // Content size of one city block (label/time/date for digital; face/date/label
 // for analog). Heights/widths are in DIPs. Independent of the current time --
 // that is what keeps the panel from resizing as the clock ticks over.
-D2D1_SIZE_F Renderer::MeasureBlock(const CityEntry& c) {
+D2D1_SIZE_F Renderer::MeasureBlock(size_t index) const {
     const float lineGap = Sc(2.f);
-    auto ml = Measure(dwFactory_.Get(), fmtLabel_.Get(), ToW(c.label));
+    const D2D1_SIZE_F ml = visuals_[index].labelSize;
 
     if (cfg_.displayMode == DisplayMode::Analog) {
         const float faceD = Sc(80.f);
@@ -170,12 +187,30 @@ D2D1_SIZE_F Renderer::MeasureBlock(const CityEntry& c) {
     return { w, h };
 }
 
+float Renderer::BlockWidth(size_t index) const {
+    return cfg_.layout == LayoutDir::Horizontal ? sizes_[index].width : maxW_;
+}
+
 void Renderer::RecomputeLayout() {
     if (!dwFactory_) return;
     const float pad = Sc(14.f);
     const float cityGap = Sc(12.f);
 
-    if (cfg_.cities.empty()) {
+    // Label metrics feed MeasureBlock, so they have to exist before it runs.
+    // Labels only change on a config reload, so this is the only place the
+    // UTF-8 to UTF-16 conversion and the measurement happen.
+    const size_t n = cfg_.cities.size();
+    visuals_.resize(n);
+    for (size_t i = 0; i < n; ++i) {
+        visuals_[i].label = ToW(cfg_.cities[i].label);
+        visuals_[i].labelSize = Measure(dwFactory_.Get(), fmtLabel_.Get(), visuals_[i].label);
+    }
+
+    sizes_.assign(n, D2D1_SIZE_F{ 0.f, 0.f });
+    lts_.assign(n, LocalTimeFields{});
+    maxW_ = 0.f;
+
+    if (n == 0) {
         desired_.cx = (LONG)std::ceil(Sc(120.f) + 2 * pad);
         desired_.cy = (LONG)std::ceil(Sc(40.f) + 2 * pad);
         return;
@@ -184,18 +219,72 @@ void Renderer::RecomputeLayout() {
     const bool horiz = cfg_.layout == LayoutDir::Horizontal;
     float along = 0.f;   // sum of sizes along the stacking axis (+ gaps)
     float cross = 0.f;   // max size on the other axis
-    for (size_t i = 0; i < cfg_.cities.size(); ++i) {
-        auto s = MeasureBlock(cfg_.cities[i]);
-        float a = horiz ? s.width : s.height;   // along the stacking direction
-        float b = horiz ? s.height : s.width;   // across
+    for (size_t i = 0; i < n; ++i) {
+        sizes_[i] = MeasureBlock(i);
+        maxW_ = (std::max)(maxW_, sizes_[i].width);
+        float a = horiz ? sizes_[i].width : sizes_[i].height;   // along
+        float b = horiz ? sizes_[i].height : sizes_[i].width;   // across
         along += a;
-        if (i + 1 < cfg_.cities.size()) along += cityGap;
+        if (i + 1 < n) along += cityGap;
         cross = (std::max)(cross, b);
     }
     float w = horiz ? along : cross;
     float h = horiz ? cross : along;
     desired_.cx = (LONG)std::ceil(w + 2 * pad);
     desired_.cy = (LONG)std::ceil(h + 2 * pad);
+}
+
+// Build the text layouts that outlive a frame. The label never changes between
+// config reloads; the date is rebuilt in UpdateFrame only when its string does.
+// Alignment lives on the layout rather than on the shared format, so the analog
+// path no longer flips the format to centred and back on every frame.
+void Renderer::RebuildVisuals() {
+    if (!dwFactory_) return;
+    const bool analog = cfg_.displayMode == DisplayMode::Analog;
+    const DWRITE_TEXT_ALIGNMENT align =
+        analog ? DWRITE_TEXT_ALIGNMENT_CENTER : DWRITE_TEXT_ALIGNMENT_LEADING;
+
+    for (size_t i = 0; i < visuals_.size(); ++i) {
+        CityVisual& v = visuals_[i];
+        const float blockW = BlockWidth(i);
+
+        v.labelLayout.Reset();
+        dwFactory_->CreateTextLayout(v.label.c_str(), (UINT32)v.label.size(),
+                                     fmtLabel_.Get(), blockW, v.labelSize.height,
+                                     &v.labelLayout);
+        if (v.labelLayout) v.labelLayout->SetTextAlignment(align);
+
+        // Force the date layout to be rebuilt against the new width/alignment.
+        v.dateLayout.Reset();
+        v.dateText.clear();
+    }
+}
+
+bool Renderer::CreateDeviceResources() {
+    if (!rt_) return false;
+    auto make = [&](UINT32 rgb, float a, ComPtr<ID2D1SolidColorBrush>& out) {
+        out.Reset();
+        return SUCCEEDED(rt_->CreateSolidColorBrush(D2D1::ColorF(rgb, a), &out));
+    };
+    // Panel background: dark, ~0.86 alpha (overall opacity applied at present).
+    if (!make(0x14161C, 0.86f, brBg_))    return false;
+    if (!make(0x6FB6FF, 1.00f, brLabel_)) return false;
+    if (!make(0xF2F4F8, 1.00f, brTime_))  return false;
+    if (!make(0x9AA3B2, 1.00f, brDate_))  return false;
+    // Two analog palettes: AM = light face with dark hands, PM = the reverse.
+    if (!make(0xF5F7FA, 0.95f, brAmFace_)) return false;  // near-white
+    if (!make(0x14161C, 1.00f, brAmHand_)) return false;  // dark hands
+    if (!make(0x8A93A2, 1.00f, brAmTick_)) return false;  // gray ticks
+    if (!make(0x20242E, 0.95f, brPmFace_)) return false;  // dark
+    if (!make(0xF2F4F8, 1.00f, brPmHand_)) return false;  // light hands
+    if (!make(0x4A5160, 1.00f, brPmTick_)) return false;  // dim ticks
+    return true;
+}
+
+void Renderer::ReleaseDeviceResources() {
+    brBg_.Reset(); brLabel_.Reset(); brTime_.Reset(); brDate_.Reset();
+    brAmFace_.Reset(); brAmHand_.Reset(); brAmTick_.Reset();
+    brPmFace_.Reset(); brPmHand_.Reset(); brPmTick_.Reset();
 }
 
 bool Renderer::EnsureSurface(int w, int h) {
@@ -208,6 +297,7 @@ bool Renderer::EnsureSurface(int w, int h) {
         DeleteDC(memDC_); memDC_ = nullptr;
     }
     if (dib_) { DeleteObject(dib_); dib_ = nullptr; }
+    bits_ = nullptr;
 
     HDC screen = GetDC(nullptr);
     memDC_ = CreateCompatibleDC(screen);
@@ -226,7 +316,9 @@ bool Renderer::EnsureSurface(int w, int h) {
     if (!dib_) { DeleteDC(memDC_); memDC_ = nullptr; return false; }
     oldBmp_ = (HBITMAP)SelectObject(memDC_, dib_);
 
-    // WIC bitmap (premultiplied BGRA) + matching D2D render target.
+    // WIC bitmap (premultiplied BGRA) + matching D2D render target. The brushes
+    // belong to the render target, so they go with it.
+    ReleaseDeviceResources();
     wicBitmap_.Reset(); rt_.Reset();
     if (FAILED(wicFactory_->CreateBitmap((UINT)w, (UINT)h, GUID_WICPixelFormat32bppPBGRA,
                                          WICBitmapCacheOnLoad, wicBitmap_.GetAddressOf())))
@@ -240,14 +332,40 @@ bool Renderer::EnsureSurface(int w, int h) {
         return false;
     rt_->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE); // ClearType needs opaque bg
 
+    if (!CreateDeviceResources()) return false;
+
     surface_ = { w, h };
     return true;
+}
+
+// Resolve each city's local time, and rebuild only the text that changed.
+void Renderer::UpdateFrame(system_clock::time_point now) {
+    const bool analog = cfg_.displayMode == DisplayMode::Analog;
+    const DWRITE_TEXT_ALIGNMENT align =
+        analog ? DWRITE_TEXT_ALIGNMENT_CENTER : DWRITE_TEXT_ALIGNMENT_LEADING;
+
+    for (size_t i = 0; i < cfg_.cities.size(); ++i) {
+        lts_[i] = ComputeLocal(cfg_.cities[i].tz, now);
+        if (!cfg_.showDate) continue;
+
+        CityVisual& v = visuals_[i];
+        std::wstring text = FormatDatePattern(lts_[i], dateFormatW_);
+        if (v.dateLayout && text == v.dateText) continue;   // same day, reuse
+
+        v.dateText = std::move(text);
+        v.dateLayout.Reset();
+        dwFactory_->CreateTextLayout(v.dateText.c_str(), (UINT32)v.dateText.size(),
+                                     fmtDate_.Get(), BlockWidth(i), worstDate_.height,
+                                     &v.dateLayout);
+        if (v.dateLayout) v.dateLayout->SetTextAlignment(align);
+    }
 }
 
 void Renderer::Render(system_clock::time_point now) {
     // Block sizes are worst-case and depend only on the config, DPI and font,
     // so the layout is already current; recomputing per frame would only
     // re-derive the same numbers.
+    UpdateFrame(now);
 
     int w = desired_.cx, h = desired_.cy;
     if (!EnsureSurface(w, h) || !rt_) return;
@@ -257,21 +375,13 @@ void Renderer::Render(system_clock::time_point now) {
     rt_->Clear(D2D1::ColorF(0, 0.f)); // fully transparent
 
     D2D1_RECT_F panel = D2D1::RectF(0.f, 0.f, float(w), float(h));
-
-    ComPtr<ID2D1SolidColorBrush> bg, label, timeB, dateB;
-    // Panel background: dark, ~0.86 alpha (overall opacity applied at present).
-    rt_->CreateSolidColorBrush(D2D1::ColorF(0x14161C, 0.86f), &bg);
-    rt_->CreateSolidColorBrush(D2D1::ColorF(0x6FB6FF, 1.0f), &label);
-    rt_->CreateSolidColorBrush(D2D1::ColorF(0xF2F4F8, 1.0f), &timeB);
-    rt_->CreateSolidColorBrush(D2D1::ColorF(0x9AA3B2, 1.0f), &dateB);
-
     float radius = Sc(10.f);
-    rt_->FillRoundedRectangle(D2D1::RoundedRect(panel, radius, radius), bg.Get());
+    rt_->FillRoundedRectangle(D2D1::RoundedRect(panel, radius, radius), brBg_.Get());
 
     if (cfg_.displayMode == DisplayMode::Analog)
-        DrawAnalog(rt_.Get(), now, label.Get());
+        DrawAnalog(rt_.Get());
     else
-        DrawDigital(rt_.Get(), now, label.Get(), timeB.Get(), dateB.Get());
+        DrawDigital(rt_.Get());
 
     if (rt_->EndDraw() == D2DERR_RECREATE_TARGET) {
         surface_ = { 0, 0 };
@@ -305,59 +415,42 @@ void Renderer::Render(system_clock::time_point now) {
     ReleaseDC(nullptr, screen);
 }
 
-void Renderer::DrawDigital(ID2D1RenderTarget* rt, system_clock::time_point now,
-                           ID2D1SolidColorBrush* label, ID2D1SolidColorBrush* timeB,
-                           ID2D1SolidColorBrush* dateB) {
+void Renderer::DrawDigital(ID2D1RenderTarget* rt) {
     const float pad = Sc(14.f);
     const float lineGap = Sc(2.f);
     const float cityGap = Sc(12.f);
     const bool horiz = cfg_.layout == LayoutDir::Horizontal;
 
-    // Pre-measure so vertical columns can share one width (left edges aligned).
-    std::vector<LocalTimeFields> lts;
-    std::vector<D2D1_SIZE_F> sizes;
-    float maxW = 0.f;
-    for (auto& c : cfg_.cities) {
-        auto s = MeasureBlock(c);
-        lts.push_back(ComputeLocal(c.tz, now)); sizes.push_back(s);
-        maxW = (std::max)(maxW, s.width);
-    }
-
     float x = pad, y = pad;
     for (size_t i = 0; i < cfg_.cities.size(); ++i) {
-        const auto& lt = lts[i];
-        float blockW = horiz ? sizes[i].width : maxW;
+        const CityVisual& v = visuals_[i];
+        float blockW = BlockWidth(i);
         float left = horiz ? x : pad;
-        float right = left + blockW;
         float yy = y;
 
-        std::wstring labelStr = ToW(cfg_.cities[i].label);
-        auto mLabel = Measure(dwFactory_.Get(), fmtLabel_.Get(), labelStr);
-        rt->DrawTextW(labelStr.c_str(), (UINT32)labelStr.size(), fmtLabel_.Get(),
-                      D2D1::RectF(left, yy, right, yy + mLabel.height), label);
-        yy += mLabel.height + lineGap;
+        if (v.labelLayout)
+            rt->DrawTextLayout(D2D1::Point2F(left, yy), v.labelLayout.Get(), brLabel_.Get());
+        yy += v.labelSize.height + lineGap;
 
-        std::wstring timeStr = FormatTime(lt, cfg_);
-        auto mTime = Measure(dwFactory_.Get(), fmtTime_.Get(), timeStr);
+        // The clock line changes every frame by construction, so there is
+        // nothing to cache for it.
+        std::wstring timeStr = FormatTime(lts_[i], cfg_);
         rt->DrawTextW(timeStr.c_str(), (UINT32)timeStr.size(), fmtTime_.Get(),
-                      D2D1::RectF(left, yy, right, yy + mTime.height), timeB);
-        yy += mTime.height;
+                      D2D1::RectF(left, yy, left + blockW, yy + worstTime_.height),
+                      brTime_.Get());
+        yy += worstTime_.height;
 
-        if (cfg_.showDate) {
-            std::wstring dateStr = FormatDatePattern(lt, ToW(cfg_.dateFormat));
-            auto mDate = Measure(dwFactory_.Get(), fmtDate_.Get(), dateStr);
+        if (cfg_.showDate && v.dateLayout) {
             yy += lineGap;
-            rt->DrawTextW(dateStr.c_str(), (UINT32)dateStr.size(), fmtDate_.Get(),
-                          D2D1::RectF(left, yy, right, yy + mDate.height), dateB);
+            rt->DrawTextLayout(D2D1::Point2F(left, yy), v.dateLayout.Get(), brDate_.Get());
         }
 
         if (horiz) x += blockW + cityGap;
-        else       y += sizes[i].height + cityGap;
+        else       y += sizes_[i].height + cityGap;
     }
 }
 
-void Renderer::DrawAnalog(ID2D1RenderTarget* rt, system_clock::time_point now,
-                          ID2D1SolidColorBrush* accent) {
+void Renderer::DrawAnalog(ID2D1RenderTarget* rt) {
     const float pad = Sc(14.f);
     const float lineGap = Sc(2.f);
     const float cityGap = Sc(12.f);
@@ -365,42 +458,21 @@ void Renderer::DrawAnalog(ID2D1RenderTarget* rt, system_clock::time_point now,
     const float r = faceD / 2.f;
     const bool horiz = cfg_.layout == LayoutDir::Horizontal;
 
-    // Two palettes: AM = light/white face with dark hands, PM = dark face with
-    // light hands. Picked per city from its own local hour (0-11 = AM).
-    ComPtr<ID2D1SolidColorBrush> amFace, amHand, amTick, pmFace, pmHand, pmTick;
-    rt->CreateSolidColorBrush(D2D1::ColorF(0xF5F7FA, 0.95f), &amFace); // near-white
-    rt->CreateSolidColorBrush(D2D1::ColorF(0x14161C, 1.00f), &amHand); // dark hands
-    rt->CreateSolidColorBrush(D2D1::ColorF(0x8A93A2, 1.00f), &amTick); // gray ticks
-    rt->CreateSolidColorBrush(D2D1::ColorF(0x20242E, 0.95f), &pmFace); // dark
-    rt->CreateSolidColorBrush(D2D1::ColorF(0xF2F4F8, 1.00f), &pmHand); // light hands
-    rt->CreateSolidColorBrush(D2D1::ColorF(0x4A5160, 1.00f), &pmTick); // dim ticks
-    ComPtr<ID2D1SolidColorBrush> dateBrush;
-    rt->CreateSolidColorBrush(D2D1::ColorF(0x9AA3B2, 1.00f), &dateBrush); // dim date text
-
-    std::vector<LocalTimeFields> lts;
-    std::vector<D2D1_SIZE_F> sizes;
-    float maxW = 0.f;
-    for (auto& c : cfg_.cities) {
-        lts.push_back(ComputeLocal(c.tz, now)); auto s = MeasureBlock(c);
-        sizes.push_back(s); maxW = (std::max)(maxW, s.width);
-    }
-
-    // Date / label are centered within each block; restore alignment afterwards.
-    fmtLabel_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
-    fmtDate_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
-
     float x = pad, y = pad;
     for (size_t i = 0; i < cfg_.cities.size(); ++i) {
-        const auto& lt = lts[i];
-        float blockW = horiz ? sizes[i].width : maxW;
+        const CityVisual& v = visuals_[i];
+        const LocalTimeFields& lt = lts_[i];
+        float blockW = BlockWidth(i);
         float left = horiz ? x : pad;
         float cx = left + blockW / 2.f;
         float ccy = y + r;
 
+        // AM = light face with dark hands, PM = dark face with light hands,
+        // picked per city from its own local hour (0-11 = AM).
         bool am = lt.valid && lt.hour < 12;
-        ID2D1SolidColorBrush* face  = am ? amFace.Get() : pmFace.Get();
-        ID2D1SolidColorBrush* hands = am ? amHand.Get() : pmHand.Get();
-        ID2D1SolidColorBrush* tick  = am ? amTick.Get() : pmTick.Get();
+        ID2D1SolidColorBrush* face  = am ? brAmFace_.Get() : brPmFace_.Get();
+        ID2D1SolidColorBrush* hands = am ? brAmHand_.Get() : brPmHand_.Get();
+        ID2D1SolidColorBrush* tick  = am ? brAmTick_.Get() : brPmTick_.Get();
 
         D2D1_ELLIPSE e = D2D1::Ellipse(D2D1::Point2F(cx, ccy), r, r);
         rt->FillEllipse(e, face);
@@ -426,30 +498,23 @@ void Renderer::DrawAnalog(ID2D1RenderTarget* rt, system_clock::time_point now,
             };
             hand(hr / 12.f,  r * 0.5f,  Sc(3.0f), hands);
             hand(min / 60.f, r * 0.75f, Sc(2.0f), hands);
-            if (cfg_.showSeconds) hand(sec / 60.f, r * 0.85f, Sc(1.0f), accent);
+            if (cfg_.showSeconds) hand(sec / 60.f, r * 0.85f, Sc(1.0f), brLabel_.Get());
         }
         rt->FillEllipse(D2D1::Ellipse(D2D1::Point2F(cx, ccy), Sc(2.5f), Sc(2.5f)), hands);
 
-        // Date (below the face), then city label (below the date).
+        // Date (below the face), then city label (below the date). Both are
+        // centred by their own layouts.
         float yy = y + faceD;
-        if (cfg_.showDate) {
-            std::wstring dateStr = FormatDatePattern(lt, ToW(cfg_.dateFormat));
-            auto mDate = Measure(dwFactory_.Get(), fmtDate_.Get(), dateStr);
+        if (cfg_.showDate && v.dateLayout) {
             yy += lineGap;
-            rt->DrawTextW(dateStr.c_str(), (UINT32)dateStr.size(), fmtDate_.Get(),
-                          D2D1::RectF(left, yy, left + blockW, yy + mDate.height), dateBrush.Get());
-            yy += mDate.height;
+            rt->DrawTextLayout(D2D1::Point2F(left, yy), v.dateLayout.Get(), brDate_.Get());
+            yy += worstDate_.height;
         }
-        std::wstring labelStr = ToW(cfg_.cities[i].label);
-        auto mLabel = Measure(dwFactory_.Get(), fmtLabel_.Get(), labelStr);
         yy += lineGap;
-        rt->DrawTextW(labelStr.c_str(), (UINT32)labelStr.size(), fmtLabel_.Get(),
-                      D2D1::RectF(left, yy, left + blockW, yy + mLabel.height), accent);
+        if (v.labelLayout)
+            rt->DrawTextLayout(D2D1::Point2F(left, yy), v.labelLayout.Get(), brLabel_.Get());
 
         if (horiz) x += blockW + cityGap;
-        else       y += sizes[i].height + cityGap;
+        else       y += sizes_[i].height + cityGap;
     }
-
-    fmtLabel_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
-    fmtDate_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
 }

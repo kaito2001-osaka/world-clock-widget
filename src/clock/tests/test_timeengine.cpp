@@ -122,3 +122,117 @@ TEST(compute_local_does_not_mix_up_zones) {
         ExpectLocal("Europe/London", t, 2026, 1, 15, 0, 0);
     }
 }
+
+// ---- offset cache equivalence ---------------------------------------------
+// ComputeLocal caches each zone's UTC offset and the window it holds for, so
+// the steady state costs no tzdb lookup at all. The risk is a stale offset
+// across a DST transition, which no one would notice by eye for months --
+// so these compare the cached path against a freshly computed reference.
+
+namespace {
+
+// The uncached reference: resolve the zone and convert from scratch each time.
+LocalTimeFields Reference(const char* tz, system_clock::time_point utc) {
+    LocalTimeFields f;
+    try {
+        const time_zone* z = locate_zone(tz);
+        if (!z) return f;
+        zoned_time zt{ z, utc };
+        local_time<system_clock::duration> lt = zt.get_local_time();
+        auto dp = floor<days>(lt);
+        year_month_day ymd{ dp };
+        weekday wd{ dp };
+        hh_mm_ss hms{ lt - dp };
+        f.valid = true;
+        f.year = int(ymd.year());
+        f.month = unsigned(ymd.month());
+        f.day = unsigned(ymd.day());
+        f.weekday = wd.c_encoding();
+        f.hour = int(hms.hours().count());
+        f.minute = int(hms.minutes().count());
+        f.second = int(hms.seconds().count());
+    } catch (...) {
+        f.valid = false;
+    }
+    return f;
+}
+
+bool SameFields(const LocalTimeFields& a, const LocalTimeFields& b) {
+    return a.valid == b.valid && a.year == b.year && a.month == b.month &&
+           a.day == b.day && a.weekday == b.weekday && a.hour == b.hour &&
+           a.minute == b.minute && a.second == b.second;
+}
+
+// Step second by second across a window and compare both paths.
+void SweepAgainstReference(const char* tz, system_clock::time_point from,
+                           system_clock::time_point to, seconds step) {
+    for (auto t = from; t < to; t += step)
+        CHECK(SameFields(ComputeLocal(tz, t), Reference(tz, t)));
+}
+
+} // namespace
+
+TEST(cache_matches_reference_across_us_spring_forward) {
+    // 2026-03-08 07:00Z: 02:00 EST becomes 03:00 EDT.
+    SweepAgainstReference("America/New_York",
+                          Utc(2026, 3, 8, 6, 58, 0), Utc(2026, 3, 8, 7, 2, 0), seconds{ 1 });
+}
+
+TEST(cache_matches_reference_across_us_fall_back) {
+    // 2026-11-01 06:00Z: 02:00 EDT becomes 01:00 EST.
+    SweepAgainstReference("America/New_York",
+                          Utc(2026, 11, 1, 5, 58, 0), Utc(2026, 11, 1, 6, 2, 0), seconds{ 1 });
+}
+
+TEST(cache_matches_reference_across_southern_transition) {
+    // Sydney leaves DST on 2026-04-05.
+    SweepAgainstReference("Australia/Sydney",
+                          Utc(2026, 4, 4, 15, 58, 0), Utc(2026, 4, 4, 16, 2, 0), seconds{ 1 });
+}
+
+TEST(cache_matches_reference_over_a_whole_year) {
+    // Coarser sweep, but wide enough to cross every transition each zone has.
+    const char* zones[] = {
+        "America/New_York", "Europe/London", "Asia/Tokyo", "Australia/Sydney",
+        "Asia/Kolkata", "Pacific/Chatham", "America/Santiago", "Etc/UTC",
+    };
+    for (const char* z : zones)
+        SweepAgainstReference(z, Utc(2026, 1, 1, 0, 0, 0), Utc(2027, 1, 1, 0, 0, 0),
+                              seconds{ 3607 });   // prime-ish, so it lands all over the clock
+}
+
+TEST(cache_is_not_confused_by_interleaved_zones) {
+    // Each zone keeps its own window; querying them in turn must not let one
+    // zone's offset leak into another.
+    const char* zones[] = { "Asia/Tokyo", "America/New_York", "Europe/London",
+                            "Australia/Sydney", "Asia/Kolkata" };
+    for (int round = 0; round < 3; ++round) {
+        for (auto t = Utc(2026, 3, 8, 6, 55, 0); t < Utc(2026, 3, 8, 7, 5, 0); t += minutes{ 1 })
+            for (const char* z : zones)
+                CHECK(SameFields(ComputeLocal(z, t), Reference(z, t)));
+    }
+}
+
+TEST(cache_handles_repeated_and_reversed_queries) {
+    // Walking backwards leaves the cached window just as much as walking
+    // forwards does; the offset must still be re-queried.
+    const char* tz = "America/New_York";
+    for (auto t = Utc(2026, 11, 1, 6, 2, 0); t > Utc(2026, 11, 1, 5, 58, 0); t -= seconds{ 1 })
+        CHECK(SameFields(ComputeLocal(tz, t), Reference(tz, t)));
+    // And repeating one instant many times stays stable.
+    auto fixed = Utc(2026, 6, 12, 3, 21, 9);
+    LocalTimeFields first = ComputeLocal(tz, fixed);
+    for (int i = 0; i < 50; ++i)
+        CHECK(SameFields(ComputeLocal(tz, fixed), first));
+}
+
+TEST(cache_still_rejects_unknown_zones_after_use) {
+    // A failed lookup is cached too; it must keep failing rather than
+    // returning a neighbouring zone's offset.
+    auto t = Utc(2026, 6, 12, 0, 0, 0);
+    for (int i = 0; i < 3; ++i) {
+        CHECK_EQ(ComputeLocal("Not/AZone", t).valid, false);
+        CHECK_EQ(ComputeLocal("Asia/Tokyo", t).valid, true);
+        CHECK_EQ(ComputeLocal("", t).valid, false);
+    }
+}
