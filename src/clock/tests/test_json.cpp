@@ -18,6 +18,34 @@ std::string Bytes(const std::string& s) {
     return out;
 }
 
+// Structural UTF-8 validation: correct lead/continuation bytes, minimal
+// encoding, no surrogates, nothing past U+10FFFF.
+bool IsValidUtf8(const std::string& s) {
+    size_t i = 0, n = s.size();
+    while (i < n) {
+        unsigned char c = (unsigned char)s[i];
+        int extra; unsigned cp;
+        if (c < 0x80)             { extra = 0; cp = c; }
+        else if ((c & 0xE0) == 0xC0) { extra = 1; cp = c & 0x1Fu; }
+        else if ((c & 0xF0) == 0xE0) { extra = 2; cp = c & 0x0Fu; }
+        else if ((c & 0xF8) == 0xF0) { extra = 3; cp = c & 0x07u; }
+        else return false;                       // stray continuation / 5-byte lead
+        if (i + extra >= n) return false;        // truncated sequence
+        for (int k = 1; k <= extra; ++k) {
+            unsigned char cc = (unsigned char)s[i + k];
+            if ((cc & 0xC0) != 0x80) return false;
+            cp = (cp << 6) | (cc & 0x3Fu);
+        }
+        if (extra == 1 && cp < 0x80) return false;      // overlong
+        if (extra == 2 && cp < 0x800) return false;     // overlong
+        if (extra == 3 && cp < 0x10000) return false;   // overlong
+        if (cp > 0x10FFFF) return false;
+        if (cp >= 0xD800 && cp <= 0xDFFF) return false; // encoded surrogate
+        i += extra + 1;
+    }
+    return true;
+}
+
 } // namespace
 
 TEST(json_parses_scalars) {
@@ -150,3 +178,96 @@ TEST(json_rejects_malformed_input) {
     CHECK_THROWS(json::parse("[1, 2"));           // unterminated array
     CHECK_THROWS(json::parse("tru"));             // truncated literal
 }
+
+// ---- surrogate pairs ------------------------------------------------------
+// System.Text.Json escapes every non-ASCII character, so a non-BMP character
+// only ever reaches the parser as a \uD8xx\uDCxx pair.
+
+TEST(json_joins_surrogate_pairs_into_one_code_point) {
+    // U+1F5FC TOKYO TOWER -> F0 9F 97 BC
+    json::Value v = json::parse("{\"s\": \"\\uD83D\\uDDFC\"}");
+    CHECK_EQ(Bytes(v.getString("s", "")), std::string("F0 9F 97 BC"));
+
+    // U+1F600 GRINNING FACE -> F0 9F 98 80
+    json::Value w = json::parse("{\"s\": \"\\uD83D\\uDE00\"}");
+    CHECK_EQ(Bytes(w.getString("s", "")), std::string("F0 9F 98 80"));
+}
+
+TEST(json_surrogate_pair_in_context) {
+    // The realistic case: a city label with an emoji in it.
+    json::Value v = json::parse("{\"label\": \"Tokyo \\uD83D\\uDDFC\"}");
+    CHECK_EQ(Bytes(v.getString("label", "")),
+             std::string("54 6F 6B 79 6F 20 F0 9F 97 BC"));
+}
+
+TEST(json_lone_surrogates_become_replacement_char) {
+    // U+FFFD -> EF BF BD. A lone surrogate has no valid UTF-8 encoding.
+    CHECK_EQ(Bytes(json::parse("{\"s\": \"\\uD83D\"}").getString("s", "")),
+             std::string("EF BF BD"));                       // high, nothing after
+    CHECK_EQ(Bytes(json::parse("{\"s\": \"\\uDE00\"}").getString("s", "")),
+             std::string("EF BF BD"));                       // low on its own
+    CHECK_EQ(Bytes(json::parse("{\"s\": \"\\uDDFC\\uD83D\"}").getString("s", "")),
+             std::string("EF BF BD EF BF BD"));              // reversed order
+}
+
+TEST(json_high_surrogate_followed_by_a_normal_escape) {
+    // The high surrogate is unpaired, but the escape after it is still valid
+    // and must be decoded on its own rather than swallowed.
+    json::Value v = json::parse("{\"s\": \"\\uD83D\\u0041\"}");
+    CHECK_EQ(Bytes(v.getString("s", "")), std::string("EF BF BD 41"));
+
+    json::Value w = json::parse("{\"s\": \"\\uD83D\\n\"}");
+    CHECK_EQ(Bytes(w.getString("s", "")), std::string("EF BF BD 0A"));
+}
+
+TEST(json_high_surrogate_followed_by_a_literal_character) {
+    json::Value v = json::parse("{\"s\": \"\\uD83DZ\"}");
+    CHECK_EQ(Bytes(v.getString("s", "")), std::string("EF BF BD 5A"));
+}
+
+TEST(json_encodes_utf8_length_boundaries) {
+    // One case per length class, on both sides of each boundary.
+    CHECK_EQ(Bytes(json::parse("{\"s\":\"\\u0000\"}").getString("s", "")), std::string("00"));
+    CHECK_EQ(Bytes(json::parse("{\"s\":\"\\u007F\"}").getString("s", "")), std::string("7F"));
+    CHECK_EQ(Bytes(json::parse("{\"s\":\"\\u0080\"}").getString("s", "")), std::string("C2 80"));
+    CHECK_EQ(Bytes(json::parse("{\"s\":\"\\u07FF\"}").getString("s", "")), std::string("DF BF"));
+    CHECK_EQ(Bytes(json::parse("{\"s\":\"\\u0800\"}").getString("s", "")), std::string("E0 A0 80"));
+    CHECK_EQ(Bytes(json::parse("{\"s\":\"\\uFFFF\"}").getString("s", "")), std::string("EF BF BF"));
+    // U+10000, the first non-BMP code point.
+    CHECK_EQ(Bytes(json::parse("{\"s\":\"\\uD800\\uDC00\"}").getString("s", "")),
+             std::string("F0 90 80 80"));
+    // U+10FFFF, the last code point there is.
+    CHECK_EQ(Bytes(json::parse("{\"s\":\"\\uDBFF\\uDFFF\"}").getString("s", "")),
+             std::string("F4 8F BF BF"));
+}
+
+TEST(json_decoded_output_is_always_valid_utf8) {
+    // Whatever the input, the bytes handed to MultiByteToWideChar must be
+    // well-formed -- that is what stops labels rendering as replacement boxes.
+    const char* inputs[] = {
+        "{\"s\":\"\\uD83D\\uDDFC\"}", "{\"s\":\"\\uD83D\"}", "{\"s\":\"\\uDE00\"}",
+        "{\"s\":\"\\uD83D\\u0041\"}", "{\"s\":\"\\u6771\\u4EAC\"}",
+        "{\"s\":\"\\uDBFF\\uDFFF\"}", "{\"s\":\"plain ascii\"}",
+    };
+    for (const char* in : inputs)
+        CHECK(IsValidUtf8(json::parse(in).getString("s", "")));
+}
+
+TEST(json_surrogate_pair_survives_a_dump_round_trip) {
+    json::Value a = json::parse("{\"label\":\"Tokyo \\uD83D\\uDDFC\"}");
+    json::Value b = json::parse(json::dump(a));
+    CHECK_EQ(b.getString("label", ""), a.getString("label", ""));
+    CHECK(IsValidUtf8(b.getString("label", "")));
+}
+
+TEST(json_validator_rejects_the_old_broken_encoding) {
+    // Guards the guard: the CESU-8 the parser used to emit for an emoji
+    // (two lone surrogates, three bytes each) must fail IsValidUtf8, otherwise
+    // the test above would pass even with the bug reintroduced.
+    CHECK_EQ(IsValidUtf8(std::string("\xED\xA0\xBD\xED\xB7\xBC")), false);
+    CHECK_EQ(IsValidUtf8(std::string("\xC0\x80")), false);       // overlong NUL
+    CHECK_EQ(IsValidUtf8(std::string("\xF0\x9F\x97")), false);   // truncated
+    CHECK_EQ(IsValidUtf8(std::string("\x80")), false);           // stray continuation
+    CHECK_EQ(IsValidUtf8(std::string("\xF0\x9F\x97\xBC")), true);// the real thing
+}
+

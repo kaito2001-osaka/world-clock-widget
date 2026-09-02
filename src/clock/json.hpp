@@ -154,6 +154,21 @@ private:
                     case 't':  out += '\t'; break;
                     case 'u': {
                         unsigned cp = parseHex4();
+                        // Characters outside the BMP arrive as a surrogate
+                        // pair (an emoji is "🗼"), which the settings
+                        // app produces for every non-ASCII character. Join the
+                        // pair into one code point; appendUtf8 turns anything
+                        // still unpaired into U+FFFD.
+                        if (cp >= 0xD800 && cp <= 0xDBFF &&
+                            peek() == '\\' && i_ + 1 < s_.size() && s_[i_ + 1] == 'u') {
+                            const size_t save = i_;
+                            get(); get();                       // consume the "\u"
+                            unsigned lo = parseHex4();
+                            if (lo >= 0xDC00 && lo <= 0xDFFF)
+                                cp = 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00);
+                            else
+                                i_ = save;  // not a low surrogate: re-read it as its own escape
+                        }
                         appendUtf8(out, cp);
                         break;
                     }
@@ -179,13 +194,22 @@ private:
         return v;
     }
 
+    // Always emits well-formed UTF-8. A lone surrogate or an out-of-range code
+    // point has no valid encoding, so it becomes U+FFFD rather than the
+    // invalid three-byte sequence that would otherwise reach MultiByteToWideChar.
     static void appendUtf8(std::string& out, unsigned cp) {
+        if (cp > 0x10FFFF || (cp >= 0xD800 && cp <= 0xDFFF)) cp = 0xFFFD;
         if (cp < 0x80) out += (char)cp;
         else if (cp < 0x800) {
             out += (char)(0xC0 | (cp >> 6));
             out += (char)(0x80 | (cp & 0x3F));
-        } else {
+        } else if (cp < 0x10000) {
             out += (char)(0xE0 | (cp >> 12));
+            out += (char)(0x80 | ((cp >> 6) & 0x3F));
+            out += (char)(0x80 | (cp & 0x3F));
+        } else {
+            out += (char)(0xF0 | (cp >> 18));
+            out += (char)(0x80 | ((cp >> 12) & 0x3F));
             out += (char)(0x80 | ((cp >> 6) & 0x3F));
             out += (char)(0x80 | (cp & 0x3F));
         }
