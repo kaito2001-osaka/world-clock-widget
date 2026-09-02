@@ -226,8 +226,12 @@ void GadgetWindow::StartTimer() {
 // fires then land inside the same second, the redraw gate skips one, and the
 // clock shows that second twice before jumping by two. Re-arming to the next
 // boundary keeps every fire just after a real rollover.
+//
+// The boundary follows what is actually on screen, so hiding seconds means
+// sleeping a whole minute instead of waking 60 times to decide there is
+// nothing to do.
 void GadgetWindow::ArmTimer() {
-    const UINT ms = MillisecondsToNextBoundary(std::chrono::system_clock::now(), true);
+    const UINT ms = MillisecondsToNextTick(std::chrono::system_clock::now(), config_);
     SetTimer(hwnd_, TIMER_ID, ms, nullptr);
 }
 
@@ -238,6 +242,7 @@ void GadgetWindow::ReloadConfig() {
     ApplyStartupRegistry(config_.launchAtStartup);
     lastMinute_ = lastSecond_ = -1; // force redraw
     RenderNow();
+    ArmTimer();   // the cadence follows showSeconds, so re-aim it right away
 }
 
 void GadgetWindow::LaunchSettings() {
