@@ -54,6 +54,9 @@ std::wstring ConfigPath();   // config.json
 std::wstring StatePath();    // state.json
 
 Config       DefaultConfig();
+// Parse config.json text. Pure (no file system), so it is unit testable;
+// anything missing, malformed or out of range falls back to DefaultConfig().
+Config       ConfigFromJson(const std::string& text);
 Config       LoadConfig();              // reads config.json (defaults if absent)
 bool         WriteDefaultConfigIfMissing();
 bool         WriteConfigFull(const Config& c);  // serialize full config -> config.json
