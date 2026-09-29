@@ -4,7 +4,6 @@
 #include <windows.h>
 #include <shlobj.h>
 #include <fstream>
-#include <sstream>
 
 #pragma comment(lib, "shell32.lib")
 
@@ -18,18 +17,45 @@ std::string ToUtf8(const std::wstring& w) {
     return s;
 }
 
-bool ReadFileUtf8(const std::wstring& path, std::string& out) {
-    std::ifstream f(path, std::ios::binary);
-    if (!f) return false;
-    std::ostringstream ss;
-    ss << f.rdbuf();
-    out = ss.str();
+// Both files are a few hundred bytes; anything this large is not ours.
+constexpr LONGLONG kMaxFileBytes = 1 << 20;
+
+enum class ReadResult { Ok, Missing, Failed };
+
+bool IsNotFound(DWORD err) {
+    return err == ERROR_FILE_NOT_FOUND || err == ERROR_PATH_NOT_FOUND;
+}
+
+// Win32 rather than ifstream so "not there" can be told apart from "there but
+// unreadable" -- the second must never be treated as permission to rewrite
+// the file. FILE_SHARE_DELETE lets the settings app's replace go ahead while
+// we are mid-read instead of failing on a sharing violation.
+ReadResult ReadFileUtf8(const std::wstring& path, std::string& out) {
+    out.clear();
+    HANDLE h = CreateFileW(path.c_str(), GENERIC_READ,
+                           FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                           nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h == INVALID_HANDLE_VALUE)
+        return IsNotFound(GetLastError()) ? ReadResult::Missing : ReadResult::Failed;
+
+    LARGE_INTEGER size{};
+    bool ok = GetFileSizeEx(h, &size) && size.QuadPart <= kMaxFileBytes;
+    if (ok && size.QuadPart > 0) {
+        out.resize((size_t)size.QuadPart);
+        DWORD got = 0;
+        // A short read means the file changed under us; report it rather
+        // than parse half a document.
+        ok = ReadFile(h, out.data(), (DWORD)out.size(), &got, nullptr) && got == out.size();
+    }
+    CloseHandle(h);
+    if (!ok) { out.clear(); return ReadResult::Failed; }
+
     // strip UTF-8 BOM if present
     if (out.size() >= 3 && (unsigned char)out[0] == 0xEF &&
         (unsigned char)out[1] == 0xBB && (unsigned char)out[2] == 0xBF) {
         out.erase(0, 3);
     }
-    return true;
+    return ReadResult::Ok;
 }
 
 bool WriteFileAtomic(const std::wstring& path, const std::string& data) {
@@ -89,10 +115,10 @@ static LayoutDir ParseLayout(const std::string& s) {
     return (s == "horizontal") ? LayoutDir::Horizontal : LayoutDir::Vertical;
 }
 
-Config ConfigFromJson(const std::string& text) {
+std::optional<Config> ParseConfig(const std::string& text) {
     try {
         json::Value root = json::parse(text);
-        if (!root.isObject()) return DefaultConfig();
+        if (!root.isObject()) return std::nullopt;
 
         Config c = DefaultConfig();
         if (const json::Value* cities = root.find("cities"); cities && cities->isArray()) {
@@ -122,14 +148,37 @@ Config ConfigFromJson(const std::string& text) {
         c.theme        = root.getString("theme", "dark");
         return c;
     } catch (...) {
-        return DefaultConfig();
+        return std::nullopt;
     }
 }
 
-Config LoadConfig() {
+ConfigLoadResult LoadConfigFile(const std::wstring& path) {
+    ConfigLoadResult r;
+    r.config = DefaultConfig();
+
     std::string text;
-    if (!ReadFileUtf8(ConfigPath(), text)) return DefaultConfig();
-    return ConfigFromJson(text);
+    switch (ReadFileUtf8(path, text)) {
+        case ReadResult::Missing: r.status = ConfigLoadStatus::Missing;    return r;
+        case ReadResult::Failed:  r.status = ConfigLoadStatus::ReadFailed; return r;
+        case ReadResult::Ok:      break;
+    }
+    if (std::optional<Config> parsed = ParseConfig(text)) {
+        r.status = ConfigLoadStatus::Ok;
+        r.config = std::move(*parsed);
+    } else {
+        r.status = ConfigLoadStatus::ParseFailed;
+    }
+    return r;
+}
+
+ConfigLoadResult LoadConfig() { return LoadConfigFile(ConfigPath()); }
+
+std::optional<Config> BaseForEdit(const ConfigLoadResult& onDisk, const Config& displayed) {
+    switch (onDisk.status) {
+        case ConfigLoadStatus::Ok:      return onDisk.config;
+        case ConfigLoadStatus::Missing: return displayed;
+        default:                        return std::nullopt;
+    }
 }
 
 static std::string ModeStr(DisplayMode m) { return m == DisplayMode::Analog ? "analog" : "digital"; }
@@ -168,13 +217,15 @@ bool WriteConfigFull(const Config& c) {
 bool WriteDefaultConfigIfMissing() {
     if (GetFileAttributesW(ConfigPath().c_str()) != INVALID_FILE_ATTRIBUTES)
         return true; // already exists
+    if (!IsNotFound(GetLastError()))
+        return false; // could not look; it may well exist, so never overwrite
     return WriteConfigFull(DefaultConfig());
 }
 
 WindowState LoadState() {
     WindowState st;
     std::string text;
-    if (!ReadFileUtf8(StatePath(), text)) return st;
+    if (ReadFileUtf8(StatePath(), text) != ReadResult::Ok) return st;
     try {
         json::Value root = json::parse(text);
         if (!root.isObject()) return st;

@@ -35,8 +35,12 @@ private:
     void StartTimer();
     void ArmTimer();   // one-shot aimed at the next display boundary
     void ReloadConfig();
+    void OnConfigLoadFailed(ConfigLoadStatus status);
+    void ShowWarning(const std::wstring& text);
     void LaunchSettings();
-    void PersistToggle(bool Config::* field, bool value);
+    // Writes one field to config.json; false when it refused to (see
+    // BaseForEdit), in which case the caller must not apply the change.
+    bool PersistToggle(bool Config::* field, bool value);
     void ShowMenu();
 
     // Config-directory watcher
@@ -56,4 +60,11 @@ private:
 
     int lastMinute_ = -1;
     int lastSecond_ = -1;
+
+    // A failed load never replaces what is on screen. It is retried a few
+    // times (the file may be mid-write or briefly locked), then reported once
+    // until a load succeeds again.
+    int  reloadRetries_     = 0;
+    bool configNoticeShown_ = false;
+    bool showingNotice_     = false;   // MessageBox pumps messages; no nesting
 };

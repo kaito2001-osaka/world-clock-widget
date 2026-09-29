@@ -15,6 +15,14 @@ namespace {
 
 constexpr UINT     WM_APP_RELOAD = WM_APP + 1;
 constexpr UINT_PTR TIMER_ID      = 1;
+constexpr UINT_PTR RELOAD_RETRY_TIMER_ID = 2;
+
+// A failed config load is retried this many times, this far apart, before it
+// is reported -- long enough to ride out an editor's save or a virus scan.
+constexpr int  kMaxReloadRetries = 4;
+constexpr UINT kReloadRetryMs    = 250;
+
+constexpr wchar_t kConfigPathHint[] = L"\n\n%APPDATA%\\WorldClockGadget\\config.json";
 
 constexpr int ID_SETTINGS = 1001;
 constexpr int ID_TOPMOST  = 1002;
@@ -60,7 +68,8 @@ bool GadgetWindow::Create(HINSTANCE hInst) {
     g_instance = this;
 
     WriteDefaultConfigIfMissing();
-    config_ = LoadConfig();
+    const ConfigLoadResult loaded = LoadConfig();
+    config_ = loaded.config;   // the defaults unless it loaded
     state_  = LoadState();
 
     WNDCLASSEXW wc{};
@@ -106,12 +115,17 @@ bool GadgetWindow::Create(HINSTANCE hInst) {
     }
     renderer_.SetConfig(config_);
     ApplyTopmost();
-    ApplyStartupRegistry(config_.launchAtStartup);
+    // Reconcile the Run key only against a config that was actually read. The
+    // defaults say "no autostart", so applying them would unregister it.
+    if (loaded.status == ConfigLoadStatus::Ok)
+        ApplyStartupRegistry(config_.launchAtStartup);
     RenderNow();   // build the layered surface before first show
 
     ShowWindow(hwnd_, SW_SHOWNOACTIVATE);
     StartTimer();
     StartWatcher();
+    if (loaded.status != ConfigLoadStatus::Ok)
+        OnConfigLoadFailed(loaded.status);
     return true;
 }
 
@@ -134,6 +148,11 @@ LRESULT CALLBACK GadgetWindow::WndProcThunk(HWND hwnd, UINT msg, WPARAM wParam, 
 LRESULT GadgetWindow::HandleMessage(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     switch (msg) {
         case WM_TIMER: {
+            if (wParam == RELOAD_RETRY_TIMER_ID) {
+                KillTimer(hwnd, RELOAD_RETRY_TIMER_ID);   // one-shot
+                ReloadConfig();
+                return 0;
+            }
             if (wParam != TIMER_ID) break;
             auto now = std::chrono::system_clock::now();
             time_t tt = std::chrono::system_clock::to_time_t(now);
@@ -187,6 +206,7 @@ LRESULT GadgetWindow::HandleMessage(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
 
         case WM_DESTROY:
             KillTimer(hwnd, TIMER_ID);
+            KillTimer(hwnd, RELOAD_RETRY_TIMER_ID);
             PostQuitMessage(0);
             return 0;
     }
@@ -236,13 +256,55 @@ void GadgetWindow::ArmTimer() {
 }
 
 void GadgetWindow::ReloadConfig() {
-    config_ = LoadConfig();
+    const ConfigLoadResult loaded = LoadConfig();
+    if (loaded.status != ConfigLoadStatus::Ok) {
+        OnConfigLoadFailed(loaded.status);   // keep showing config_
+        return;
+    }
+    KillTimer(hwnd_, RELOAD_RETRY_TIMER_ID);
+    reloadRetries_ = 0;
+    configNoticeShown_ = false;
+
+    config_ = loaded.config;
     renderer_.SetConfig(config_);
     ApplyTopmost();
     ApplyStartupRegistry(config_.launchAtStartup);
     lastMinute_ = lastSecond_ = -1; // force redraw
     RenderNow();
     ArmTimer();   // the cadence follows showSeconds, so re-aim it right away
+}
+
+void GadgetWindow::OnConfigLoadFailed(ConfigLoadStatus status) {
+    // A deleted file is nothing to report: no settings are lost, and the
+    // watcher fires again when it is recreated.
+    if (status == ConfigLoadStatus::Missing) return;
+
+    // An editor may be mid-save, or a scanner may hold the file for a moment.
+    if (reloadRetries_ < kMaxReloadRetries) {
+        ++reloadRetries_;
+        SetTimer(hwnd_, RELOAD_RETRY_TIMER_ID, kReloadRetryMs, nullptr);
+        return;
+    }
+    reloadRetries_ = 0;
+    if (configNoticeShown_) return;   // once per run of failures
+    configNoticeShown_ = true;
+
+    std::wstring text = status == ConfigLoadStatus::ParseFailed
+        ? L"config.json に構文エラーがあるため、読み込めませんでした。\n"
+        : L"config.json を読み込めませんでした"
+          L"（他のアプリが使用中か、アクセスが拒否されています）。\n";
+    text += L"読み込めるようになるまで、直前に読み込めた設定"
+            L"（無い場合は既定の設定）で表示します。config.json は変更しません。";
+    ShowWarning(text + kConfigPathHint);
+}
+
+// Modal, so it pumps messages: a reload landing meanwhile must not stack a
+// second box on top of this one.
+void GadgetWindow::ShowWarning(const std::wstring& text) {
+    if (showingNotice_) return;
+    showingNotice_ = true;
+    MessageBoxW(hwnd_, text.c_str(), L"World Clock", MB_OK | MB_ICONWARNING);
+    showingNotice_ = false;
 }
 
 void GadgetWindow::LaunchSettings() {
@@ -258,10 +320,25 @@ void GadgetWindow::LaunchSettings() {
     }
 }
 
-void GadgetWindow::PersistToggle(bool Config::* field, bool value) {
-    Config c = LoadConfig();
-    c.*field = value;
-    WriteConfigFull(c);
+// Re-reads the file rather than rebuilding it from config_, so a save the
+// settings app made a moment ago (and the watcher has not reloaded yet)
+// survives. A file that is there but unreadable is left alone: writing the
+// defaults over it would throw away every city the user can still fix.
+bool GadgetWindow::PersistToggle(bool Config::* field, bool value) {
+    const ConfigLoadResult onDisk = LoadConfig();
+    std::optional<Config> base = BaseForEdit(onDisk, config_);
+    if (!base) {
+        std::wstring text = onDisk.status == ConfigLoadStatus::ParseFailed
+            ? L"config.json に構文エラーがあるため、この変更を保存できませんでした。\n"
+              L"ファイルを修正するか、設定アプリから保存し直してください。"
+            : L"config.json を読み込めないため、この変更を保存できませんでした。\n"
+              L"しばらくしてから、もう一度お試しください。";
+        ShowWarning(text + kConfigPathHint);
+        return false;
+    }
+    (*base).*field = value;
+    WriteConfigFull(*base);
+    return true;
 }
 
 void GadgetWindow::ShowMenu() {
@@ -284,13 +361,14 @@ void GadgetWindow::ShowMenu() {
     switch (cmd) {
         case ID_SETTINGS: LaunchSettings(); break;
         case ID_TOPMOST:
-            config_.alwaysOnTop = !config_.alwaysOnTop;
-            ApplyTopmost();
-            PersistToggle(&Config::alwaysOnTop, config_.alwaysOnTop);
+            if (PersistToggle(&Config::alwaysOnTop, !config_.alwaysOnTop)) {
+                config_.alwaysOnTop = !config_.alwaysOnTop;
+                ApplyTopmost();
+            }
             break;
         case ID_LOCK:
-            config_.lockPosition = !config_.lockPosition;
-            PersistToggle(&Config::lockPosition, config_.lockPosition);
+            if (PersistToggle(&Config::lockPosition, !config_.lockPosition))
+                config_.lockPosition = !config_.lockPosition;
             break;
         case ID_EXIT:
             DestroyWindow(hwnd_);

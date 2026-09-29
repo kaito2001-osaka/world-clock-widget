@@ -8,6 +8,10 @@ public partial class MainWindow : FluentWindow
 {
     private readonly ObservableCollection<CityModel> _cities = new();
 
+    // Set when config.json exists but could not be loaded: the window shows the
+    // defaults, so the file is backed up before the first save replaces it.
+    private bool _backupBeforeSave;
+
     public MainWindow()
     {
         InitializeComponent();
@@ -20,8 +24,28 @@ public partial class MainWindow : FluentWindow
             System.Windows.Controls.Primitives.TextBoxBase.TextChangedEvent,
             new System.Windows.Controls.TextChangedEventHandler((_, _) => UpdateDatePreview()));
 
-        LoadFromConfig(ConfigModel.Load());
+        LoadFromConfig(ConfigModel.Load(out var status));
         _cities.CollectionChanged += (_, _) => UpdateAnalogWarning();
+
+        if (status is ConfigLoadStatus.Unreadable or ConfigLoadStatus.Invalid)
+        {
+            _backupBeforeSave = true;
+            Loaded += (_, _) => WarnConfigNotLoaded(status);
+        }
+    }
+
+    private void WarnConfigNotLoaded(ConfigLoadStatus status)
+    {
+        var reason = status == ConfigLoadStatus.Invalid
+            ? "config.json に構文エラーがあるため、読み込めませんでした。"
+            : "config.json を読み込めませんでした（他のアプリが使用中か、アクセスが拒否されています）。\n" +
+              "いったん閉じて開き直すと、読み込めることがあります。";
+        System.Windows.MessageBox.Show(this,
+            $"{reason}\n既定の設定を表示しています。\n\n" +
+            "このまま保存すると config.json は上書きされます。" +
+            $"上書き前のファイルは次の場所に残します:\n{ConfigModel.BackupPath}",
+            "World Clock の設定",
+            System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Warning);
     }
 
     // ---- Populate UI from a config model ----
@@ -93,6 +117,13 @@ public partial class MainWindow : FluentWindow
         try
         {
             var cfg = BuildConfig();
+            if (_backupBeforeSave)
+            {
+                // A failed copy throws and skips the save: better no save than
+                // overwriting the only copy of the user's settings.
+                ConfigModel.BackUpExistingFile();
+                _backupBeforeSave = false;
+            }
             cfg.Save();
             // Apply autostart immediately so it works even if the gadget isn't running.
             Startup.Apply(cfg.LaunchAtStartup);

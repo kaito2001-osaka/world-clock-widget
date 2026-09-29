@@ -14,6 +14,14 @@ public sealed class CityModel
     [JsonIgnore] public string Display => string.IsNullOrWhiteSpace(Label) ? Tz : $"{Label}  ({Tz})";
 }
 
+public enum ConfigLoadStatus
+{
+    Ok,          // parsed from config.json
+    Missing,     // no file yet
+    Unreadable,  // exists but could not be read (locked, access denied)
+    Invalid,     // read, but not a config this app can parse
+}
+
 public sealed class ConfigModel
 {
     [JsonPropertyName("cities")]       public List<CityModel> Cities { get; set; } = new();
@@ -64,26 +72,54 @@ public sealed class ConfigModel
         };
     }
 
-    public static ConfigModel Load()
+    // Anything other than Ok comes back with the defaults, and the status says
+    // so: the caller must not save those over a file that still holds the
+    // user's settings without telling them first.
+    public static ConfigModel Load(out ConfigLoadStatus status)
     {
+        string json;
         try
         {
-            if (File.Exists(ConfigPath))
+            if (!File.Exists(ConfigPath))
             {
-                var json = File.ReadAllText(ConfigPath);
-                var model = JsonSerializer.Deserialize<ConfigModel>(json, Opts);
-                if (model != null)
-                {
-                    if (model.Cities.Count == 0) model.Cities = Default().Cities;
-                    return model;
-                }
+                status = ConfigLoadStatus.Missing;
+                return Default();
+            }
+            json = File.ReadAllText(ConfigPath);
+        }
+        catch
+        {
+            status = ConfigLoadStatus.Unreadable;
+            return Default();
+        }
+
+        try
+        {
+            var model = JsonSerializer.Deserialize<ConfigModel>(json, Opts);
+            if (model != null)
+            {
+                // Like the gadget: no usable city list means the default cities.
+                model.Cities ??= new();
+                if (model.Cities.Count == 0) model.Cities = Default().Cities;
+                status = ConfigLoadStatus.Ok;
+                return model;
             }
         }
         catch
         {
-            // Corrupt file: fall through to defaults (do not destroy the user's file).
+            // Syntax error or a value of the wrong type.
         }
+        status = ConfigLoadStatus.Invalid;
         return Default();
+    }
+
+    public static string BackupPath => ConfigPath + ".bak";
+
+    // Keeps a copy of a config.json that could not be loaded before it is
+    // overwritten, so a hand edit with a typo is never simply lost.
+    public static void BackUpExistingFile()
+    {
+        if (File.Exists(ConfigPath)) File.Copy(ConfigPath, BackupPath, overwrite: true);
     }
 
     // Atomic write: write to a temp file then replace, so the gadget's file
