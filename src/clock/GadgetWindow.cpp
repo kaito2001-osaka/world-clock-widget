@@ -337,7 +337,14 @@ bool GadgetWindow::PersistToggle(bool Config::* field, bool value) {
         return false;
     }
     (*base).*field = value;
-    WriteConfigFull(*base);
+    // On failure the caller leaves config_ (and the menu check) as it was, so
+    // what is shown never claims a setting the file does not hold.
+    if (!WriteConfigFull(*base)) {
+        ShowWarning(L"config.json に変更を保存できませんでした。\n"
+                    L"ファイルが読み取り専用でないか確認し、もう一度お試しください。"
+                    + std::wstring(kConfigPathHint));
+        return false;
+    }
     return true;
 }
 
@@ -417,7 +424,7 @@ void GadgetWindow::WatchThreadProc() {
         if (!GetOverlappedResult(h, &ov, &transferred, FALSE)) break;
 
         // Only the config file itself. Matching a substring would also fire on
-        // the "config.json.tmp" that both writers replace through, turning one
+        // the "config.json.*.tmp" the two writers replace through, turning one
         // save into several reloads -- the first of them reading the file
         // before the replace has landed.
         if (ContainsConfigChange(buf, transferred)) {

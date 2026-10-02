@@ -1,7 +1,7 @@
 // Deciding whether a directory-change notification concerns config.json.
 //
-// Both writers replace the file atomically through a "config.json.tmp"
-// sibling, so a substring test matches the temp file's write *and* its rename
+// Both writers replace the file atomically through a temp sibling
+// ("config.json.gadget.tmp" / "config.json.settings.tmp"), so a substring test matches the temp file's write *and* its rename
 // as well as the real thing -- turning one save into several reloads, one of
 // which reads the file before the replace has landed. The name has to match
 // exactly.
@@ -16,7 +16,7 @@
 inline constexpr const wchar_t* kConfigFileName = L"config.json";
 
 // Exact, case-insensitive match against kConfigFileName. NTFS is
-// case-insensitive, so "Config.JSON" counts; "config.json.tmp" does not.
+// case-insensitive, so "Config.JSON" counts; "config.json.gadget.tmp" does not.
 bool IsConfigFileName(const std::wstring& name);
 
 // Walk a FILE_NOTIFY_INFORMATION chain and report whether any record names the
