@@ -5,6 +5,8 @@
 #include <windows.h>
 #include <thread>
 #include <atomic>
+#include <chrono>
+#include <optional>
 
 #include "Config.hpp"
 #include "Renderer.hpp"
@@ -34,6 +36,7 @@ private:
     void SaveCurrentPosition();
     void StartTimer();
     void ArmTimer();   // one-shot aimed at the next display boundary
+    void Tick();       // redraw if the displayed instant moved, then re-arm
     void ReloadConfig();
     void OnConfigLoadFailed(ConfigLoadStatus status);
     void ShowWarning(const std::wstring& text);
@@ -58,8 +61,8 @@ private:
     std::atomic<bool> watchRun_{ false };
     HANDLE            watchStop_ = nullptr;
 
-    int lastMinute_ = -1;
-    int lastSecond_ = -1;
+    // The instant last drawn (see DisplayedInstant); reset to force a redraw.
+    std::optional<std::chrono::system_clock::time_point> lastShown_;
 
     // A failed load never replaces what is on screen. It is retried a few
     // times (the file may be mid-write or briefly locked), then reported once

@@ -22,3 +22,14 @@ UINT MillisecondsToNextBoundary(system_clock::time_point now, bool secondsResolu
 UINT MillisecondsToNextTick(system_clock::time_point now, const Config& cfg) {
     return MillisecondsToNextBoundary(now, cfg.showSeconds);
 }
+
+system_clock::time_point DisplayedInstant(system_clock::time_point now, bool secondsResolution) {
+    // floor, not duration_cast: pre-epoch instants must round down too.
+    return secondsResolution ? system_clock::time_point{ floor<seconds>(now) }
+                             : system_clock::time_point{ floor<minutes>(now) };
+}
+
+bool NeedsRedraw(std::optional<system_clock::time_point> lastShown,
+                 system_clock::time_point now, bool secondsResolution) {
+    return !lastShown || *lastShown != DisplayedInstant(now, secondsResolution);
+}
