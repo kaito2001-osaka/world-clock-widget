@@ -60,6 +60,9 @@ TEST(config_name_rejects_the_atomic_write_temp_file) {
     // match fires on the temp write *and* the rename -- several reloads per
     // save, the first reading the file before the replace has landed.
     CHECK_EQ(IsConfigFileName(L"config.json.tmp"), false);
+    // Each writer now has its own temp name (#24); neither may count.
+    CHECK_EQ(IsConfigFileName(L"config.json.gadget.tmp"), false);
+    CHECK_EQ(IsConfigFileName(L"config.json.settings.tmp"), false);
     CHECK_EQ(IsConfigFileName(L"config.json.devbak"), false);
     CHECK_EQ(IsConfigFileName(L"config.json.bak"), false);
     CHECK_EQ(IsConfigFileName(L"config.json~"), false);
@@ -94,6 +97,9 @@ TEST(config_change_walks_a_realistic_atomic_replace) {
     // over the target. Only the rename onto config.json should count.
     CHECK_EQ(Hit({ L"config.json.tmp" }), false);
     CHECK_EQ(Hit({ L"config.json.tmp", L"config.json" }), true);
+    CHECK_EQ(Hit({ L"config.json.gadget.tmp" }), false);
+    CHECK_EQ(Hit({ L"config.json.settings.tmp" }), false);
+    CHECK_EQ(Hit({ L"config.json.settings.tmp", L"config.json" }), true);
 }
 
 TEST(config_change_handles_an_empty_buffer) {

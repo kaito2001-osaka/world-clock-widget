@@ -58,8 +58,21 @@ ReadResult ReadFileUtf8(const std::wstring& path, std::string& out) {
     return ReadResult::Ok;
 }
 
+// The settings app writes config.json too. A replace can collide with its
+// replace or with any reader that has the file open without FILE_SHARE_DELETE;
+// both clear within milliseconds, so a few short retries ride them out.
+constexpr int   kReplaceAttempts = 5;
+constexpr DWORD kReplaceRetryMs  = 50;
+
+bool IsTransientReplaceError(DWORD err) {
+    return err == ERROR_SHARING_VIOLATION || err == ERROR_ACCESS_DENIED ||
+           err == ERROR_LOCK_VIOLATION;
+}
+
 bool WriteFileAtomic(const std::wstring& path, const std::string& data) {
-    std::wstring tmp = path + L".tmp";
+    // Our own temp name: the settings app replaces through
+    // "config.json.settings.tmp", so neither writer can clobber the other's.
+    std::wstring tmp = path + L".gadget.tmp";
     {
         std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
         if (!f) return false;
@@ -67,11 +80,14 @@ bool WriteFileAtomic(const std::wstring& path, const std::string& data) {
         if (!f) return false;
     }
     // Replace destination atomically.
-    if (!MoveFileExW(tmp.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
-        DeleteFileW(tmp.c_str());
-        return false;
+    for (int attempt = 1;; ++attempt) {
+        if (MoveFileExW(tmp.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
+            return true;
+        if (attempt == kReplaceAttempts || !IsTransientReplaceError(GetLastError())) break;
+        Sleep(kReplaceRetryMs);
     }
-    return true;
+    DeleteFileW(tmp.c_str());
+    return false;
 }
 
 } // namespace

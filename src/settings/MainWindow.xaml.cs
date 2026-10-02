@@ -12,6 +12,11 @@ public partial class MainWindow : FluentWindow
     // defaults, so the file is backed up before the first save replaces it.
     private bool _backupBeforeSave;
 
+    // What the window showed right after the last load or save. A save merges
+    // against it so fields the user left alone take config.json's current
+    // value instead of reverting the gadget's menu toggles (#24).
+    private ConfigModel _baseline = ConfigModel.Default();
+
     public MainWindow()
     {
         InitializeComponent();
@@ -25,6 +30,9 @@ public partial class MainWindow : FluentWindow
             new System.Windows.Controls.TextChangedEventHandler((_, _) => UpdateDatePreview()));
 
         LoadFromConfig(ConfigModel.Load(out var status));
+        // Read back from the controls, so normalisation they apply (clamped
+        // opacity, default date format) does not count as a user edit.
+        _baseline = BuildConfig();
         _cities.CollectionChanged += (_, _) => UpdateAnalogWarning();
 
         if (status is ConfigLoadStatus.Unreadable or ConfigLoadStatus.Invalid)
@@ -117,6 +125,11 @@ public partial class MainWindow : FluentWindow
         try
         {
             var cfg = BuildConfig();
+            // The gadget may have written since we loaded. When the file reads
+            // cleanly, keep its value for every field not changed here.
+            var disk = ConfigModel.Load(out var diskStatus);
+            if (diskStatus == ConfigLoadStatus.Ok)
+                cfg = ConfigModel.Merge(_baseline, cfg, disk);
             if (_backupBeforeSave)
             {
                 // A failed copy throws and skips the save: better no save than
@@ -125,6 +138,10 @@ public partial class MainWindow : FluentWindow
                 _backupBeforeSave = false;
             }
             cfg.Save();
+            // Show what was actually written (merged values included), so
+            // further edits after Apply start from the file's state.
+            LoadFromConfig(cfg);
+            _baseline = BuildConfig();
             // Apply autostart immediately so it works even if the gadget isn't running.
             Startup.Apply(cfg.LaunchAtStartup);
             return true;

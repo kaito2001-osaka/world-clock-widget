@@ -122,17 +122,72 @@ public sealed class ConfigModel
         if (File.Exists(ConfigPath)) File.Copy(ConfigPath, BackupPath, overwrite: true);
     }
 
+    // The gadget writes config.json too (menu toggles). A replace can collide
+    // with its replace or with a reader that has the file open; those clear
+    // within milliseconds, so a few short retries ride them out.
+    private const int ReplaceAttempts = 5;
+    private const int ReplaceRetryMs = 50;
+
     // Atomic write: write to a temp file then replace, so the gadget's file
-    // watcher never observes a half-written config.
+    // watcher never observes a half-written config. The temp name is ours
+    // alone; the gadget replaces through "config.json.gadget.tmp".
     public void Save()
     {
         var json = JsonSerializer.Serialize(this, Opts);
         var path = ConfigPath;
-        var tmp = path + ".tmp";
+        var tmp = path + ".settings.tmp";
         File.WriteAllText(tmp, json);
-        if (File.Exists(path)) File.Replace(tmp, path, null);
-        else File.Move(tmp, path);
+        for (int attempt = 1; ; attempt++)
+        {
+            try
+            {
+                if (File.Exists(path)) File.Replace(tmp, path, null);
+                else File.Move(tmp, path);
+                return;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException
+                                       && attempt < ReplaceAttempts)
+            {
+                Thread.Sleep(ReplaceRetryMs);
+            }
+            catch
+            {
+                try { File.Delete(tmp); } catch { }
+                throw;
+            }
+        }
     }
+
+    // Three-way merge for a save. `baseline` is what the window last loaded or
+    // saved, `edited` is what it shows now, `disk` is config.json as it is now.
+    // A field the user did not change in the window takes the file's value, so
+    // a change made elsewhere since (the gadget's menu toggles) is not reverted.
+    public static ConfigModel Merge(ConfigModel baseline, ConfigModel edited, ConfigModel disk)
+    {
+        T Pick<T>(Func<ConfigModel, T> f) =>
+            EqualityComparer<T>.Default.Equals(f(edited), f(baseline)) ? f(disk) : f(edited);
+
+        var cities = SameCities(edited.Cities, baseline.Cities) ? disk.Cities : edited.Cities;
+        return new ConfigModel
+        {
+            Cities = cities.Select(c => new CityModel { Label = c.Label, Tz = c.Tz }).ToList(),
+            DisplayMode = Pick(c => c.DisplayMode),
+            Layout = Pick(c => c.Layout),
+            HourFormat = Pick(c => c.HourFormat),
+            ShowDate = Pick(c => c.ShowDate),
+            DateFormat = Pick(c => c.DateFormat),
+            ShowSeconds = Pick(c => c.ShowSeconds),
+            Size = Pick(c => c.Size),
+            Opacity = Pick(c => c.Opacity),
+            AlwaysOnTop = Pick(c => c.AlwaysOnTop),
+            LockPosition = Pick(c => c.LockPosition),
+            LaunchAtStartup = Pick(c => c.LaunchAtStartup),
+            Theme = Pick(c => c.Theme),
+        };
+    }
+
+    private static bool SameCities(List<CityModel> a, List<CityModel> b) =>
+        a.Select(c => (c.Label, c.Tz)).SequenceEqual(b.Select(c => (c.Label, c.Tz)));
 
     public ConfigModel Clone()
     {
