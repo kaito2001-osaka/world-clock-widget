@@ -12,6 +12,7 @@
 #pragma once
 #include <windows.h>
 #include <chrono>
+#include <optional>
 
 #include "Config.hpp"
 
@@ -28,3 +29,15 @@ UINT MillisecondsToNextBoundary(std::chrono::system_clock::time_point now,
 // process that never exits.
 UINT MillisecondsToNextTick(std::chrono::system_clock::time_point now,
                             const Config& cfg);
+
+// What the display shows for `now`: the instant floored to the second
+// (secondsResolution) or to the minute.
+std::chrono::system_clock::time_point DisplayedInstant(
+    std::chrono::system_clock::time_point now, bool secondsResolution);
+
+// Whether a tick at `now` has to redraw, given the instant last drawn (none on
+// the first frame or after a reset). Compares whole instants rather than the
+// second / minute field, so a jump by an exact minute or hour -- resume from
+// sleep, a clock change -- and a jump backwards still redraw.
+bool NeedsRedraw(std::optional<std::chrono::system_clock::time_point> lastShown,
+                 std::chrono::system_clock::time_point now, bool secondsResolution);

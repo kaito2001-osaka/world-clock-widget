@@ -172,3 +172,64 @@ TEST(cadence_showing_seconds_still_ticks_every_second) {
     for (long long ms = 0; ms < 60000; ms += 331)
         CHECK(MillisecondsToNextTick(AtOffset(ms), on) <= 1000u);
 }
+
+// ---- redraw gate ----------------------------------------------------------
+//
+// The gate used to compare only tm_sec / tm_min, so a jump by an exact minute
+// (seconds shown) or an exact hour (minutes shown) -- resume from sleep, a
+// clock change -- read as "no change" and left the old time up (#25).
+
+TEST(redraw_displayed_instant_floors_to_the_resolution) {
+    CHECK(DisplayedInstant(AtOffset(1999), true) == AtOffset(1000));
+    CHECK(DisplayedInstant(AtOffset(59999), true) == AtOffset(59000));
+    CHECK(DisplayedInstant(AtOffset(59999), false) == AtOffset(0));
+    CHECK(DisplayedInstant(AtOffset(60000), false) == AtOffset(60000));
+}
+
+TEST(redraw_first_frame_always_draws) {
+    CHECK(NeedsRedraw(std::nullopt, AtOffset(0), true));
+    CHECK(NeedsRedraw(std::nullopt, AtOffset(0), false));
+}
+
+TEST(redraw_skips_when_the_displayed_instant_is_unchanged) {
+    CHECK(!NeedsRedraw(DisplayedInstant(AtOffset(1000), true), AtOffset(1999), true));
+    CHECK(!NeedsRedraw(DisplayedInstant(AtOffset(0), false), AtOffset(59999), false));
+}
+
+TEST(redraw_draws_on_the_next_second_or_minute) {
+    CHECK(NeedsRedraw(DisplayedInstant(AtOffset(1999), true), AtOffset(2000), true));
+    CHECK(NeedsRedraw(DisplayedInstant(AtOffset(59999), false), AtOffset(60000), false));
+}
+
+TEST(redraw_draws_after_an_exact_minute_jump_with_seconds_shown) {
+    // Same tm_sec on both sides.
+    const auto drawn = DisplayedInstant(AtOffset(5000), true);
+    CHECK(NeedsRedraw(drawn, AtOffset(5000 + 60000), true));
+    CHECK(NeedsRedraw(drawn, AtOffset(5000 + 3 * 60000), true));
+}
+
+TEST(redraw_draws_after_an_exact_hour_jump_with_minutes_shown) {
+    // Sleep at 14:05, wake in 17:05: same tm_min on both sides.
+    const long long hour = 60LL * 60000;
+    const auto drawn = DisplayedInstant(AtOffset(5 * 60000), false);
+    CHECK(NeedsRedraw(drawn, AtOffset(5 * 60000 + hour), false));
+    CHECK(NeedsRedraw(drawn, AtOffset(5 * 60000 + 3 * hour + 30000), false));
+}
+
+TEST(redraw_draws_after_a_backwards_jump) {
+    const long long hour = 60LL * 60000;
+    const auto lastMin = DisplayedInstant(AtOffset(2 * hour), false);
+    CHECK(NeedsRedraw(lastMin, AtOffset(hour), false));
+    const auto lastSec = DisplayedInstant(AtOffset(2 * hour), true);
+    CHECK(NeedsRedraw(lastSec, AtOffset(2 * hour - 60000), true));
+}
+
+TEST(redraw_floors_pre_epoch_instants_down) {
+    // duration_cast would round toward zero, i.e. up, before 1970.
+    const auto preEpoch = system_clock::time_point{
+        sys_days{ year{ 1969 } / month{ 12 } / day{ 31 } }.time_since_epoch() };
+    const auto t = preEpoch + milliseconds{ 1500 };
+    CHECK(DisplayedInstant(t, true) == preEpoch + seconds{ 1 });
+    CHECK(DisplayedInstant(t, false) == preEpoch);
+    CHECK(DisplayedInstant(preEpoch - milliseconds{ 1 }, false) == preEpoch - minutes{ 1 });
+}

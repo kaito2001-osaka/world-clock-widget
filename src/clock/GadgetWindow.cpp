@@ -8,7 +8,6 @@
 #include <shellapi.h>
 #include <string>
 #include <chrono>
-#include <ctime>
 #include <vector>
 
 namespace {
@@ -154,19 +153,25 @@ LRESULT GadgetWindow::HandleMessage(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
                 return 0;
             }
             if (wParam != TIMER_ID) break;
-            auto now = std::chrono::system_clock::now();
-            time_t tt = std::chrono::system_clock::to_time_t(now);
-            tm utc; gmtime_s(&utc, &tt);
-            bool changed = config_.showSeconds ? (utc.tm_sec != lastSecond_)
-                                               : (utc.tm_min != lastMinute_);
-            if (changed || lastMinute_ < 0) {
-                lastSecond_ = utc.tm_sec;
-                lastMinute_ = utc.tm_min;
-                RenderNow();
-            }
-            ArmTimer();   // re-aim at the next boundary
+            Tick();
             return 0;
         }
+
+        // The clock jumped (a clock change, or resume from sleep). The pending
+        // timer was aimed with the old time, so waiting for it could leave the
+        // stale time up for a whole period. Redraw now and re-aim. Turning
+        // rendering back on when the display wakes (#18) should go this way too.
+        case WM_TIMECHANGE:
+            lastShown_.reset();
+            Tick();
+            return 0;
+
+        case WM_POWERBROADCAST:
+            if (wParam == PBT_APMRESUMEAUTOMATIC) {
+                lastShown_.reset();
+                Tick();
+            }
+            return TRUE;
 
         case WM_PAINT: {
             // Content is presented via UpdateLayeredWindow; just validate.
@@ -255,6 +260,15 @@ void GadgetWindow::ArmTimer() {
     SetTimer(hwnd_, TIMER_ID, ms, nullptr);
 }
 
+void GadgetWindow::Tick() {
+    const auto now = std::chrono::system_clock::now();
+    if (NeedsRedraw(lastShown_, now, config_.showSeconds)) {
+        lastShown_ = DisplayedInstant(now, config_.showSeconds);
+        RenderNow();
+    }
+    ArmTimer();   // re-aim at the next boundary
+}
+
 void GadgetWindow::ReloadConfig() {
     const ConfigLoadResult loaded = LoadConfig();
     if (loaded.status != ConfigLoadStatus::Ok) {
@@ -269,9 +283,8 @@ void GadgetWindow::ReloadConfig() {
     renderer_.SetConfig(config_);
     ApplyTopmost();
     ApplyStartupRegistry(config_.launchAtStartup);
-    lastMinute_ = lastSecond_ = -1; // force redraw
-    RenderNow();
-    ArmTimer();   // the cadence follows showSeconds, so re-aim it right away
+    lastShown_.reset();   // force redraw
+    Tick();               // the cadence follows showSeconds, so re-aim it right away
 }
 
 void GadgetWindow::OnConfigLoadFailed(ConfigLoadStatus status) {
