@@ -197,6 +197,10 @@ std::optional<Config> BaseForEdit(const ConfigLoadResult& onDisk, const Config& 
     }
 }
 
+bool NeedsApply(bool shownIsFromFile, const Config& shown, const Config& loaded) {
+    return !shownIsFromFile || shown != loaded;
+}
+
 static std::string ModeStr(DisplayMode m) { return m == DisplayMode::Analog ? "analog" : "digital"; }
 static std::string LayoutStr(LayoutDir l) { return l == LayoutDir::Horizontal ? "horizontal" : "vertical"; }
 static std::string SizeStr(SizeClass s) {
