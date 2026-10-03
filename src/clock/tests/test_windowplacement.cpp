@@ -128,3 +128,44 @@ TEST(placement_is_idempotent) {
     RECT twice = ClampToVisibleArea(once, kOneMonitor);
     CHECK(Same(once, twice));
 }
+
+// --- RescueOrigin: re-checking a running window after a monitor change (#26) ---
+
+TEST(rescue_moves_a_window_off_an_unplugged_monitor) {
+    // The reported case: the gadget sat on the second monitor, which is gone.
+    RECT w = Window(2400, 300);
+    std::optional<POINT> to = RescueOrigin(w, kOneMonitor);
+    CHECK(to.has_value());
+    CHECK(IsSufficientlyVisible(Window(to->x, to->y), kOneMonitor));
+    CHECK_EQ(to->x, 1920L - 240L);   // pulled to the near edge of the primary
+    CHECK_EQ(to->y, 300L);           // the other axis is kept
+}
+
+TEST(rescue_leaves_a_usable_window_alone) {
+    // Display notifications fire for many reasons; most must not move it.
+    CHECK(!RescueOrigin(Window(400, 300), kOneMonitor).has_value());
+    CHECK(!RescueOrigin(Window(2400, 300), kTwoMonitors).has_value());
+    CHECK(!RescueOrigin(Window(1820, 500), kOneMonitor).has_value());   // partly off, still grabbable
+}
+
+TEST(rescue_waits_while_no_monitor_is_reported) {
+    // Mid-change the list can come back empty; there is nowhere to move to.
+    CHECK(!RescueOrigin(Window(-5000, -5000), {}).has_value());
+}
+
+TEST(rescue_moves_a_window_left_as_a_sliver_by_a_shrunk_work_area) {
+    // Resolution dropped from 1920 wide to 1280: the window at x=1250 now shows
+    // 30px, under kMinVisibleX.
+    const std::vector<RECT> shrunk = { R(0, 0, 1280, 720) };
+    std::optional<POINT> to = RescueOrigin(Window(1250, 300), shrunk);
+    CHECK(to.has_value());
+    CHECK(IsSufficientlyVisible(Window(to->x, to->y), shrunk));
+}
+
+TEST(rescue_uses_the_real_window_size) {
+    // The running window is whatever size the renderer made it, not the seed.
+    RECT wide = R(1900, 300, 1900 + 400, 300 + 150);
+    std::optional<POINT> to = RescueOrigin(wide, kOneMonitor);
+    CHECK(to.has_value());
+    CHECK_EQ(to->x, 1920L - 400L);   // the right edge lands on the work area edge
+}

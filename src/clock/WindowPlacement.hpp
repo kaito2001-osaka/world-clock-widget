@@ -8,6 +8,7 @@
 // caller supplies the work areas (via EnumDisplayMonitors in the gadget).
 #pragma once
 #include <windows.h>
+#include <optional>
 #include <vector>
 
 // How much of the window must remain on a monitor for the position to be
@@ -25,3 +26,9 @@ RECT ClampToVisibleArea(RECT desired, const std::vector<RECT>& workAreas);
 // True when `desired` overlaps some work area by at least the minimum on both
 // axes. Exposed for tests and for callers that only want the predicate.
 bool IsSufficientlyVisible(const RECT& desired, const std::vector<RECT>& workAreas);
+
+// For a window that is already up when the monitors change: the origin to move
+// it to, or nullopt when it should stay put -- it is still usable where it is,
+// or there are no work areas yet (the topology is mid-change; moving it then
+// would mean inventing a position).
+std::optional<POINT> RescueOrigin(const RECT& current, const std::vector<RECT>& workAreas);
