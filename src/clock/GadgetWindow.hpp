@@ -51,9 +51,16 @@ private:
     void StartWatcher();
     void StopWatcher();
     void WatchThreadProc();
+    // One open-arm-wait session on the config directory; returns on an error
+    // (the caller backs off and reopens) or when the stop event is set.
+    void WatchDirectory(bool afterFailure, int& failures);
+    void RequestReload();   // watcher thread; coalesced via reloadPending_
 
     Renderer    renderer_;
     Config      config_;
+    // config_ holds settings read from config.json, not the defaults standing
+    // in for a file that could not be read at startup (see NeedsApply).
+    bool        configFromFile_ = false;
     WindowState state_;
     HWND        hwnd_  = nullptr;
     HINSTANCE   hinst_ = nullptr;
@@ -61,6 +68,9 @@ private:
     std::thread       watchThread_;
     std::atomic<bool> watchRun_{ false };
     HANDLE            watchStop_ = nullptr;
+    // A WM_APP_RELOAD is queued and not yet handled; further requests ride on
+    // it instead of queueing a second full reload.
+    std::atomic<bool> reloadPending_{ false };
 
     // The instant last drawn (see DisplayedInstant); reset to force a redraw.
     std::optional<std::chrono::system_clock::time_point> lastShown_;

@@ -5,6 +5,7 @@
 #include <windows.h>
 #include <cstring>
 #include <string>
+#include <utility>
 
 namespace {
 
@@ -216,6 +217,56 @@ TEST(config_edit_builds_on_the_file_or_on_what_is_displayed) {
     std::optional<Config> b = BaseForEdit(missing, displayed);
     CHECK(b.has_value());
     if (b) CHECK_EQ(b->cities[0].label, std::string("Osaka"));
+}
+
+// ---- reload no-op (#27) ---------------------------------------------------
+
+TEST(config_equality_sees_every_kind_of_field) {
+    CHECK(DefaultConfig() == DefaultConfig());
+
+    // Each of these is a save the reload must not skip as "unchanged".
+    Config c = DefaultConfig(); c.cities[0].label = "Osaka";            CHECK(c != DefaultConfig());
+    c = DefaultConfig(); c.cities[0].tz = "Asia/Seoul";                 CHECK(c != DefaultConfig());
+    c = DefaultConfig(); c.cities.pop_back();                           CHECK(c != DefaultConfig());
+    c = DefaultConfig(); std::swap(c.cities[0], c.cities[1]);           CHECK(c != DefaultConfig());
+    c = DefaultConfig(); c.displayMode = DisplayMode::Analog;           CHECK(c != DefaultConfig());
+    c = DefaultConfig(); c.layout = LayoutDir::Horizontal;              CHECK(c != DefaultConfig());
+    c = DefaultConfig(); c.hourFormat = 12;                             CHECK(c != DefaultConfig());
+    c = DefaultConfig(); c.showDate = false;                            CHECK(c != DefaultConfig());
+    c = DefaultConfig(); c.dateFormat = "yyyy-MM-dd";                   CHECK(c != DefaultConfig());
+    c = DefaultConfig(); c.showSeconds = true;                          CHECK(c != DefaultConfig());
+    c = DefaultConfig(); c.size = SizeClass::Large;                     CHECK(c != DefaultConfig());
+    c = DefaultConfig(); c.opacity = 84;                                CHECK(c != DefaultConfig());
+    c = DefaultConfig(); c.alwaysOnTop = true;                          CHECK(c != DefaultConfig());
+    c = DefaultConfig(); c.lockPosition = true;                         CHECK(c != DefaultConfig());
+    c = DefaultConfig(); c.launchAtStartup = true;                      CHECK(c != DefaultConfig());
+    c = DefaultConfig(); c.theme = "light";                             CHECK(c != DefaultConfig());
+}
+
+TEST(config_reformatted_file_parses_equal) {
+    // The same settings written with other whitespace and key order -- e.g.
+    // the second notification of one save -- must compare equal, or the
+    // duplicate reload is not skipped.
+    Config a = Parsed(R"({"cities":[{"label":"Tokyo","tz":"Asia/Tokyo"}],"opacity":70,"showSeconds":true})");
+    Config b = Parsed("{\n  \"showSeconds\": true,\n  \"opacity\": 70,\n"
+                      "  \"cities\": [ { \"tz\": \"Asia/Tokyo\", \"label\": \"Tokyo\" } ]\n}\n");
+    CHECK(a == b);
+}
+
+TEST(config_reload_applies_only_what_changed) {
+    Config shown = DefaultConfig();
+    Config same  = DefaultConfig();
+    Config other = DefaultConfig(); other.opacity = 50;
+
+    CHECK_EQ(NeedsApply(true, shown, same), false);   // duplicate / overflow reload
+    CHECK_EQ(NeedsApply(true, shown, other), true);
+}
+
+TEST(config_reload_applies_the_first_good_load_after_a_failed_start) {
+    // Started on the defaults because the file was unreadable; the file is
+    // then fixed to settings that happen to equal them. Still apply once: the
+    // Run key was never reconciled against the user's file.
+    CHECK_EQ(NeedsApply(false, DefaultConfig(), DefaultConfig()), true);
 }
 
 TEST(config_scale_follows_size_class) {

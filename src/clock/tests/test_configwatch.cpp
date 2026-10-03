@@ -2,6 +2,7 @@
 #include "test_framework.hpp"
 #include "ConfigWatch.hpp"
 
+#include <climits>
 #include <string>
 #include <vector>
 
@@ -102,12 +103,52 @@ TEST(config_change_walks_a_realistic_atomic_replace) {
     CHECK_EQ(Hit({ L"config.json.settings.tmp", L"config.json" }), true);
 }
 
-TEST(config_change_handles_an_empty_buffer) {
-    // A zero-length result means the kernel dropped notifications; there is
-    // nothing to parse and nothing may be read from the buffer.
-    CHECK_EQ(ContainsConfigChange(nullptr, 0), false);
-    std::vector<BYTE> buf = BuildChain({ L"config.json" });
-    CHECK_EQ(ContainsConfigChange(buf.data(), 0), false);
+TEST(config_change_treats_an_overflow_as_a_change) {
+    // A zero-length result means the kernel overflowed and dropped the batch.
+    // It may have held the config.json save, so it has to count (#27); the
+    // buffer holds nothing valid and must not be read.
+    CHECK_EQ(ContainsConfigChange(nullptr, 0), true);
+    std::vector<BYTE> unrelated = BuildChain({ L"state.json" });
+    CHECK_EQ(ContainsConfigChange(unrelated.data(), 0), true);
+}
+
+TEST(config_change_rejects_a_missing_buffer) {
+    CHECK_EQ(ContainsConfigChange(nullptr, 64), false);
+}
+
+// ---- watch failures (#27) -------------------------------------------------
+
+TEST(watch_overflow_error_is_told_apart_from_a_broken_handle) {
+    // An overflow keeps the handle; anything else means reopening it.
+    CHECK_EQ(IsOverflowError(ERROR_NOTIFY_ENUM_DIR), true);
+    CHECK_EQ(IsOverflowError(ERROR_ACCESS_DENIED), false);       // directory deleted
+    CHECK_EQ(IsOverflowError(ERROR_INVALID_HANDLE), false);
+    CHECK_EQ(IsOverflowError(ERROR_OPERATION_ABORTED), false);
+    CHECK_EQ(IsOverflowError(ERROR_FILE_NOT_FOUND), false);
+    CHECK_EQ(IsOverflowError(0), false);
+}
+
+TEST(watch_retry_starts_short_and_doubles) {
+    CHECK_EQ(WatchRetryDelayMs(0), kWatchRetryFirstMs);
+    CHECK_EQ(WatchRetryDelayMs(1), kWatchRetryFirstMs * 2);
+    CHECK_EQ(WatchRetryDelayMs(2), kWatchRetryFirstMs * 4);
+    for (int i = 0; i < 40; ++i)
+        CHECK(WatchRetryDelayMs(i + 1) >= WatchRetryDelayMs(i));
+}
+
+TEST(watch_retry_is_capped_and_never_overflows) {
+    // A directory gone for good must settle at the cap, not wrap to a tiny
+    // (busy-looping) or zero delay.
+    CHECK_EQ(WatchRetryDelayMs(7), kWatchRetryMaxMs);   // 250 * 128 > 30000
+    CHECK_EQ(WatchRetryDelayMs(31), kWatchRetryMaxMs);
+    CHECK_EQ(WatchRetryDelayMs(32), kWatchRetryMaxMs);
+    CHECK_EQ(WatchRetryDelayMs(1000), kWatchRetryMaxMs);
+    CHECK_EQ(WatchRetryDelayMs(INT_MAX), kWatchRetryMaxMs);
+}
+
+TEST(watch_retry_treats_a_negative_count_as_the_first_failure) {
+    CHECK_EQ(WatchRetryDelayMs(-1), kWatchRetryFirstMs);
+    CHECK_EQ(WatchRetryDelayMs(INT_MIN), kWatchRetryFirstMs);
 }
 
 TEST(config_change_stops_at_a_truncated_header) {

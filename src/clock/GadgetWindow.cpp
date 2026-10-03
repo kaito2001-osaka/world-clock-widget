@@ -75,6 +75,7 @@ bool GadgetWindow::Create(HINSTANCE hInst) {
     WriteDefaultConfigIfMissing();
     const ConfigLoadResult loaded = LoadConfig();
     config_ = loaded.config;   // the defaults unless it loaded
+    configFromFile_ = loaded.status == ConfigLoadStatus::Ok;
     state_  = LoadState();
 
     WNDCLASSEXW wc{};
@@ -218,6 +219,9 @@ LRESULT GadgetWindow::HandleMessage(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
             return 0;
 
         case WM_APP_RELOAD:
+            // Cleared before reading, so a change landing during the read
+            // queues another reload instead of being folded into this one.
+            reloadPending_.store(false);
             ReloadConfig();
             return 0;
 
@@ -323,6 +327,8 @@ void GadgetWindow::ReloadConfig() {
     reloadRetries_ = 0;
     configNoticeShown_ = false;
 
+    if (!NeedsApply(configFromFile_, config_, loaded.config)) return;
+    configFromFile_ = true;
     config_ = loaded.config;
     renderer_.SetConfig(config_);
     ApplyTopmost();
@@ -453,8 +459,25 @@ void GadgetWindow::StopWatcher() {
     if (watchStop_) { CloseHandle(watchStop_); watchStop_ = nullptr; }
 }
 
+// The watcher must outlive any error. The directory handle is opened with
+// FILE_SHARE_DELETE, so the folder can be deleted or replaced under us; giving
+// up then would leave every later save unapplied until the gadget restarts.
+// Instead each failed session is followed by a backoff and a reopen. The stop
+// event ends the backoff wait early, so shutdown never waits it out.
 void GadgetWindow::WatchThreadProc() {
-    std::wstring dir = ConfigDir();
+    int  failures     = 0;
+    bool afterFailure = false;
+    while (watchRun_.load()) {
+        WatchDirectory(afterFailure, failures);
+        if (!watchRun_.load()) break;
+        afterFailure = true;
+        if (WaitForSingleObject(watchStop_, WatchRetryDelayMs(failures++)) == WAIT_OBJECT_0)
+            break;
+    }
+}
+
+void GadgetWindow::WatchDirectory(bool afterFailure, int& failures) {
+    const std::wstring dir = ConfigDir();   // recreates the folder if it was deleted
     HANDLE h = CreateFileW(dir.c_str(), FILE_LIST_DIRECTORY,
                            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
                            nullptr, OPEN_EXISTING,
@@ -463,7 +486,10 @@ void GadgetWindow::WatchThreadProc() {
 
     OVERLAPPED ov{};
     ov.hEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    if (!ov.hEvent) { CloseHandle(h); return; }
     BYTE buf[4096];
+    bool pending = false;
+    bool armed   = false;
 
     while (watchRun_.load()) {
         DWORD bytes = 0;
@@ -471,22 +497,38 @@ void GadgetWindow::WatchThreadProc() {
         BOOL ok = ReadDirectoryChangesW(h, buf, sizeof(buf), FALSE,
                                         FILE_NOTIFY_CHANGE_LAST_WRITE | FILE_NOTIFY_CHANGE_FILE_NAME,
                                         &bytes, &ov, nullptr);
-        if (!ok) break;
+        if (!ok) break;   // reopen
+        pending = true;
+
+        // Nothing was watching between the failure and now, so a save made
+        // in that gap produced no notification. Read the file once to catch it.
+        if (!armed) {
+            armed = true;
+            if (afterFailure) RequestReload();
+        }
 
         HANDLE waits[2] = { ov.hEvent, watchStop_ };
         DWORD w = WaitForMultipleObjects(2, waits, FALSE, INFINITE);
         if (w != WAIT_OBJECT_0) break; // stop signaled
 
         DWORD transferred = 0;
-        if (!GetOverlappedResult(h, &ov, &transferred, FALSE)) break;
+        const BOOL done = GetOverlappedResult(h, &ov, &transferred, FALSE);
+        pending = false;
+        if (!done) {
+            // An overflow can arrive as an error rather than as zero bytes;
+            // the handle is still good, so treat it like the zero-byte case.
+            if (!IsOverflowError(GetLastError())) break;   // reopen
+            transferred = 0;
+        }
+        failures = 0;   // the watch works, so the next failure backs off from the start
 
         // Only the config file itself. Matching a substring would also fire on
         // the "config.json.*.tmp" the two writers replace through, turning one
         // save into several reloads -- the first of them reading the file
-        // before the replace has landed.
+        // before the replace has landed. An overflow counts as a change.
         if (ContainsConfigChange(buf, transferred)) {
             Sleep(80); // let the writer finish the atomic replace
-            PostMessageW(hwnd_, WM_APP_RELOAD, 0, 0);
+            RequestReload();
         }
     }
     // The loop can exit with a ReadDirectoryChangesW still pending, and both
@@ -494,9 +536,19 @@ void GadgetWindow::WatchThreadProc() {
     // to land before returning, or the kernel writes into a frame that is
     // already gone. The directory handle closes first; closing the event while
     // an I/O could still signal it risks signalling a recycled handle.
-    CancelIoEx(h, &ov);
-    DWORD cancelled = 0;
-    GetOverlappedResult(h, &ov, &cancelled, TRUE);
+    if (pending) {
+        CancelIoEx(h, &ov);
+        DWORD cancelled = 0;
+        GetOverlappedResult(h, &ov, &cancelled, TRUE);
+    }
     CloseHandle(h);
     CloseHandle(ov.hEvent);
+}
+
+// One save can arrive as several notification batches. While a reload is
+// still queued it will read the latest file anyway, so a second request adds
+// nothing but a second full reload.
+void GadgetWindow::RequestReload() {
+    if (reloadPending_.exchange(true)) return;
+    if (!PostMessageW(hwnd_, WM_APP_RELOAD, 0, 0)) reloadPending_.store(false);
 }

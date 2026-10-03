@@ -22,4 +22,21 @@ bool IsConfigFileName(const std::wstring& name);
 // Walk a FILE_NOTIFY_INFORMATION chain and report whether any record names the
 // config file. `transferred` bounds the walk: a record whose header or name
 // would run past it is treated as the end of the buffer rather than read.
+// A zero `transferred` is the kernel saying it overflowed and dropped the
+// batch; that counts as a change, since the dropped records may have named
+// the config file. The reload it causes is a no-op if nothing changed.
 bool ContainsConfigChange(const BYTE* buffer, DWORD transferred);
+
+// Whether a failed ReadDirectoryChangesW / GetOverlappedResult is the
+// overflow case (ERROR_NOTIFY_ENUM_DIR) -- the handle is still good, so the
+// watcher reloads and re-arms. Any other error means the handle has to be
+// reopened.
+bool IsOverflowError(DWORD err);
+
+// How long the watcher waits before reopening the directory after its
+// `failures`-th consecutive failure (0-based): doubling from the first delay
+// up to the cap, so a directory that is gone for good costs one open attempt
+// every half minute rather than a busy loop.
+inline constexpr DWORD kWatchRetryFirstMs = 250;
+inline constexpr DWORD kWatchRetryMaxMs   = 30000;
+DWORD WatchRetryDelayMs(int failures);

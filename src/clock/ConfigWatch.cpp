@@ -15,8 +15,10 @@ bool IsConfigFileName(const std::wstring& name) {
 
 bool ContainsConfigChange(const BYTE* buffer, DWORD transferred) {
     // A zero-length result means the kernel dropped notifications (buffer
-    // overflow). There is nothing to parse; the caller re-arms and moves on.
-    if (!buffer || transferred == 0) return false;
+    // overflow). What was dropped is unknown, so it may well have been
+    // config.json; reporting "no change" would lose that save for good.
+    if (transferred == 0) return true;
+    if (!buffer) return false;
 
     DWORD offset = 0;
     for (;;) {
@@ -39,4 +41,17 @@ bool ContainsConfigChange(const BYTE* buffer, DWORD transferred) {
         offset += next;
     }
     return false;
+}
+
+bool IsOverflowError(DWORD err) {
+    return err == ERROR_NOTIFY_ENUM_DIR;
+}
+
+DWORD WatchRetryDelayMs(int failures) {
+    if (failures < 0) failures = 0;
+    // Stop doubling once past the cap rather than shifting by `failures`,
+    // which would overflow long before INT_MAX.
+    DWORD delay = kWatchRetryFirstMs;
+    for (int i = 0; i < failures && delay < kWatchRetryMaxMs; ++i) delay *= 2;
+    return delay < kWatchRetryMaxMs ? delay : kWatchRetryMaxMs;
 }

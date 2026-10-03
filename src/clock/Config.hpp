@@ -9,6 +9,8 @@
 struct CityEntry {
     std::string label;   // display name, e.g. "Tokyo"
     std::string tz;      // IANA tz id, e.g. "Asia/Tokyo"
+
+    bool operator==(const CityEntry&) const = default;
 };
 
 enum class DisplayMode { Digital, Analog };
@@ -40,6 +42,10 @@ struct Config {
             default:                return 1.0;
         }
     }
+
+    // Defaulted so a field added later cannot be left out of the comparison
+    // and have its changes skipped on reload (see NeedsApply).
+    bool operator==(const Config&) const = default;
 };
 
 struct WindowState {
@@ -84,6 +90,15 @@ ConfigLoadResult LoadConfig();          // LoadConfigFile(ConfigPath())
 // destroy them, so the edit is refused instead. A missing file has nothing to
 // lose, so the edit goes on top of what is displayed.
 std::optional<Config> BaseForEdit(const ConfigLoadResult& onDisk, const Config& displayed);
+
+// Whether a config that just loaded has to be applied. One save can reach the
+// watcher as several notifications, and an overflow or a reopened watch asks
+// for a reload with nothing changed; applying the same settings again rebuilds
+// every text format for nothing. `shownIsFromFile` is false while the defaults
+// stand in for a file that could not be read at startup: those have never been
+// applied as the user's settings (the Run key was not reconciled), so the
+// first good load is applied even when it equals them.
+bool NeedsApply(bool shownIsFromFile, const Config& shown, const Config& loaded);
 
 // Only writes when the file is known to be absent; any other failure to look
 // at it leaves it alone.
