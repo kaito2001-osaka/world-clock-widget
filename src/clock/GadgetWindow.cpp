@@ -15,6 +15,12 @@ namespace {
 constexpr UINT     WM_APP_RELOAD = WM_APP + 1;
 constexpr UINT_PTR TIMER_ID      = 1;
 constexpr UINT_PTR RELOAD_RETRY_TIMER_ID = 2;
+constexpr UINT_PTR DISPLAY_SETTLE_TIMER_ID = 3;
+
+// WM_DISPLAYCHANGE can arrive before the monitor topology has finished
+// changing, and one undock sends several notifications. Re-check once, this
+// long after the last of them.
+constexpr UINT kDisplaySettleMs = 500;
 
 // A failed config load is retried this many times, this far apart, before it
 // is reported -- long enough to ride out an editor's save or a virus scan.
@@ -152,6 +158,11 @@ LRESULT GadgetWindow::HandleMessage(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
                 ReloadConfig();
                 return 0;
             }
+            if (wParam == DISPLAY_SETTLE_TIMER_ID) {
+                KillTimer(hwnd, DISPLAY_SETTLE_TIMER_ID);   // one-shot
+                RescueFromOffscreen();
+                return 0;
+            }
             if (wParam != TIMER_ID) break;
             Tick();
             return 0;
@@ -172,6 +183,18 @@ LRESULT GadgetWindow::HandleMessage(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
                 Tick();
             }
             return TRUE;
+
+        // A monitor was removed or resized, or the taskbar moved, while we are
+        // up. The startup clamp has long since run, so re-check here. Setting
+        // the timer again restarts it, which coalesces a burst into one check.
+        case WM_DISPLAYCHANGE:
+            SetTimer(hwnd, DISPLAY_SETTLE_TIMER_ID, kDisplaySettleMs, nullptr);
+            break;
+
+        case WM_SETTINGCHANGE:
+            if (wParam == SPI_SETWORKAREA)
+                SetTimer(hwnd, DISPLAY_SETTLE_TIMER_ID, kDisplaySettleMs, nullptr);
+            break;
 
         case WM_PAINT: {
             // Content is presented via UpdateLayeredWindow; just validate.
@@ -212,6 +235,7 @@ LRESULT GadgetWindow::HandleMessage(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
         case WM_DESTROY:
             KillTimer(hwnd, TIMER_ID);
             KillTimer(hwnd, RELOAD_RETRY_TIMER_ID);
+            KillTimer(hwnd, DISPLAY_SETTLE_TIMER_ID);
             PostQuitMessage(0);
             return 0;
     }
@@ -240,6 +264,26 @@ void GadgetWindow::SaveCurrentPosition() {
         state_.monitor = dev;
     }
     SaveState(state_);
+}
+
+// Pulls the window back onto a monitor that exists, using its real size (the
+// startup clamp only had the seed size).
+//
+// The new position is deliberately not saved. state.json holds where the user
+// last put the window, and only a drag (WM_EXITSIZEMOVE) writes it -- the
+// startup clamp and WM_DPICHANGED moves do not either. Topology changes are
+// often transient (a DisplayPort monitor powering off, a remote desktop
+// session, undocking for the day), and saving here would replace that position
+// with the fallback, so the window would not come back to the external monitor
+// on the next start. If the old position is still off-screen then, the startup
+// clamp rescues it again.
+void GadgetWindow::RescueFromOffscreen() {
+    RECT rc;
+    if (!GetWindowRect(hwnd_, &rc)) return;
+    const std::optional<POINT> to = RescueOrigin(rc, MonitorWorkAreas());
+    if (!to) return;
+    SetWindowPos(hwnd_, nullptr, to->x, to->y, 0, 0,
+                 SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
 }
 
 void GadgetWindow::StartTimer() {

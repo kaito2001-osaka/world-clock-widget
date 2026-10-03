@@ -62,3 +62,9 @@ RECT ClampToVisibleArea(RECT desired, const std::vector<RECT>& workAreas) {
 
     return RECT{ x, y, x + w, y + h };
 }
+
+std::optional<POINT> RescueOrigin(const RECT& current, const std::vector<RECT>& workAreas) {
+    const RECT placed = ClampToVisibleArea(current, workAreas);
+    if (placed.left == current.left && placed.top == current.top) return std::nullopt;
+    return POINT{ placed.left, placed.top };
+}

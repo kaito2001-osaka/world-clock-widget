@@ -34,6 +34,7 @@ private:
     void ApplyTopmost();
     void RenderNow();
     void SaveCurrentPosition();
+    void RescueFromOffscreen();   // after a monitor change; does not save
     void StartTimer();
     void ArmTimer();   // one-shot aimed at the next display boundary
     void Tick();       // redraw if the displayed instant moved, then re-arm
