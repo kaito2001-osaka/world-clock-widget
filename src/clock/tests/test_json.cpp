@@ -2,6 +2,9 @@
 #include "test_framework.hpp"
 #include "json.hpp"
 
+#include <climits>
+#include <limits>
+#include <sstream>
 #include <string>
 
 namespace {
@@ -271,3 +274,83 @@ TEST(json_validator_rejects_the_old_broken_encoding) {
     CHECK_EQ(IsValidUtf8(std::string("\xF0\x9F\x97\xBC")), true);// the real thing
 }
 
+// ---- robustness against hand-edited or corrupt files (#28) -----------------
+
+TEST(json_getint_rejects_out_of_range_numbers) {
+    json::Value v = json::parse(
+        "{\"big\": 1e10, \"small\": -1e10, \"over\": 2147483648,"
+        " \"under\": -2147483649, \"max\": 2147483647, \"min\": -2147483648,"
+        " \"pos\": 1.9, \"neg\": -1.9}");
+    CHECK_EQ(v.getInt("big", 7), 7);
+    CHECK_EQ(v.getInt("small", 7), 7);
+    CHECK_EQ(v.getInt("over", 7), 7);
+    CHECK_EQ(v.getInt("under", 7), 7);
+    CHECK_EQ(v.getInt("max", 7), INT_MAX);
+    CHECK_EQ(v.getInt("min", 7), INT_MIN);
+    // In-range fractions still truncate toward zero, as before.
+    CHECK_EQ(v.getInt("pos", 7), 1);
+    CHECK_EQ(v.getInt("neg", 7), -1);
+
+    // The parser cannot produce these, but a Value built in code can.
+    json::Value w;
+    w.set("nan", std::numeric_limits<double>::quiet_NaN());
+    w.set("inf", std::numeric_limits<double>::infinity());
+    w.set("ninf", -std::numeric_limits<double>::infinity());
+    CHECK_EQ(w.getInt("nan", 7), 7);
+    CHECK_EQ(w.getInt("inf", 7), 7);
+    CHECK_EQ(w.getInt("ninf", 7), 7);
+}
+
+TEST(json_dump_escapes_every_control_character) {
+    auto escaped = [](const std::string& s) {
+        std::ostringstream o;
+        json::escape(o, s);
+        return o.str();
+    };
+    CHECK_EQ(escaped("\x01"), std::string(R"("\u0001")"));
+    CHECK_EQ(escaped("\x1F"), std::string(R"("\u001F")"));
+    CHECK_EQ(escaped(std::string(1, '\0')), std::string(R"("\u0000")"));
+    CHECK_EQ(escaped("\b\f"), std::string(R"("\b\f")"));
+
+    // Every control character comes out escaped and parses back unchanged.
+    for (int ch = 0; ch < 0x20; ++ch) {
+        const std::string s = std::string("a") + (char)ch + "b";
+        const std::string out = escaped(s);
+        bool raw = false;
+        for (unsigned char c : out) if (c < 0x20) raw = true;
+        CHECK_EQ(raw, false);
+
+        json::Value v;
+        v.set("label", s);
+        CHECK_EQ(json::parse(json::dump(v)).getString("label", ""), s);
+    }
+
+    // UTF-8 bytes are >= 0x80 and must not be mistaken for control characters.
+    CHECK_EQ(Bytes(escaped("\xE6\x9D\xB1\xE4\xBA\xAC")),
+             std::string("22 E6 9D B1 E4 BA AC 22"));
+}
+
+TEST(json_rejects_trailing_characters) {
+    CHECK_THROWS(json::parse("{}x"));
+    CHECK_THROWS(json::parse("{} {}"));         // two writes run together
+    CHECK_THROWS(json::parse("[1]]"));
+    CHECK_THROWS(json::parse("1 2"));
+    CHECK(json::parse("{}  \r\n\t").isObject()); // trailing whitespace is fine
+}
+
+TEST(json_limits_nesting_depth) {
+    auto arrays = [](int n) { return std::string(n, '[') + std::string(n, ']'); };
+    auto objects = [](int n) {
+        std::string s;
+        for (int k = 0; k < n - 1; ++k) s += "{\"a\":";
+        s += "{}";
+        s += std::string(n - 1, '}');
+        return s;
+    };
+    CHECK(json::parse(arrays(64)).isArray());
+    CHECK_THROWS(json::parse(arrays(65)));
+    CHECK(json::parse(objects(64)).isObject());
+    CHECK_THROWS(json::parse(objects(65)));
+    // Deep enough to overflow the stack without the limit; must throw instead.
+    CHECK_THROWS(json::parse(std::string(100000, '[')));
+}

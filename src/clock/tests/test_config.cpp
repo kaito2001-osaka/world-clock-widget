@@ -87,6 +87,8 @@ TEST(config_clamps_opacity_into_visible_range) {
     CHECK_EQ(Parsed(R"({"opacity": -50})").opacity, 10);
     CHECK_EQ(Parsed(R"({"opacity": 101})").opacity, 100);
     CHECK_EQ(Parsed(R"({"opacity": 100000})").opacity, 100);
+    // Too large for an int at all: treated as missing rather than cast.
+    CHECK_EQ(Parsed(R"({"opacity": 1e10})").opacity, 85);
     // In-range values pass through, including the boundaries.
     CHECK_EQ(Parsed(R"({"opacity": 10})").opacity, 10);
     CHECK_EQ(Parsed(R"({"opacity": 100})").opacity, 100);
@@ -137,6 +139,8 @@ TEST(config_malformed_json_is_reported_not_turned_into_defaults) {
     CHECK(!ParseConfig("[1, 2, 3]").has_value());
     // The reported case: a hand edit that leaves a trailing comma.
     CHECK(!ParseConfig(R"({"cities":[{"label":"Osaka","tz":"Asia/Tokyo"}],})").has_value());
+    // Anything after the root object means the file is corrupt.
+    CHECK(!ParseConfig(R"({"opacity": 40}xyz)").has_value());
 }
 
 TEST(config_load_file_tells_missing_unreadable_and_malformed_apart) {
