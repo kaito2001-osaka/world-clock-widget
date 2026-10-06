@@ -53,7 +53,12 @@ public:
         return (v && v->type == Type::Number) ? v->num : def;
     }
     int getInt(const std::string& key, int def) const {
-        return static_cast<int>(getNumber(key, def));
+        // Casting a double that does not fit in int (or NaN) is undefined
+        // behaviour. These bounds are exactly the values that truncate toward
+        // zero into int's range; NaN fails both comparisons.
+        const double d = getNumber(key, def);
+        if (!(d > -2147483649.0 && d < 2147483648.0)) return def;
+        return static_cast<int>(d);
     }
     bool getBool(const std::string& key, bool def) const {
         auto* v = find(key);
@@ -76,12 +81,21 @@ public:
         skipWs();
         Value v = parseValue();
         skipWs();
+        // "{...}xyz" or two writes run together is a corrupt file, not a
+        // config that happens to have a tail.
+        if (i_ != s_.size()) fail("trailing characters");
         return v;
     }
 
 private:
+    // config.json nests three deep (root -> cities -> city). The limit only
+    // has to stop a run of '[' from overflowing the stack, which no catch
+    // block can recover from.
+    static constexpr int kMaxDepth = 64;
+
     const std::string& s_;
     size_t i_ = 0;
+    int depth_ = 0;
 
     [[noreturn]] void fail(const char* msg) { throw std::runtime_error(msg); }
 
@@ -218,8 +232,9 @@ private:
     Value parseArray() {
         Value v; v.type = Type::Array;
         get(); // [
+        if (++depth_ > kMaxDepth) fail("nesting too deep");
         skipWs();
-        if (peek() == ']') { get(); return v; }
+        if (peek() == ']') { get(); --depth_; return v; }
         while (true) {
             v.arr.push_back(parseValue());
             skipWs();
@@ -228,14 +243,16 @@ private:
             if (c == ']') break;
             fail("expected , or ]");
         }
+        --depth_;
         return v;
     }
 
     Value parseObject() {
         Value v; v.type = Type::Object;
         get(); // {
+        if (++depth_ > kMaxDepth) fail("nesting too deep");
         skipWs();
-        if (peek() == '}') { get(); return v; }
+        if (peek() == '}') { get(); --depth_; return v; }
         while (true) {
             skipWs();
             std::string key = parseString();
@@ -249,6 +266,7 @@ private:
             if (c == '}') break;
             fail("expected , or }");
         }
+        --depth_;
         return v;
     }
 };
@@ -265,7 +283,19 @@ inline void escape(std::ostream& o, const std::string& s) {
             case '\n': o << "\\n";  break;
             case '\r': o << "\\r";  break;
             case '\t': o << "\\t";  break;
-            default:   o << c;       break;
+            case '\b': o << "\\b";  break;
+            case '\f': o << "\\f";  break;
+            default:
+                // JSON forbids raw control characters, and System.Text.Json
+                // rejects the whole file over one. Compare as unsigned so
+                // UTF-8 lead and continuation bytes pass through.
+                if ((unsigned char)c < 0x20) {
+                    static const char* kHex = "0123456789ABCDEF";
+                    o << "\\u00" << kHex[(unsigned char)c >> 4] << kHex[c & 0xF];
+                } else {
+                    o << c;
+                }
+                break;
         }
     }
     o << '"';
