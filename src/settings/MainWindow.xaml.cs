@@ -28,6 +28,11 @@ public partial class MainWindow : FluentWindow
         DateFormatBox.AddHandler(
             System.Windows.Controls.Primitives.TextBoxBase.TextChangedEvent,
             new System.Windows.Controls.TextChangedEventHandler((_, _) => UpdateDatePreview()));
+        // The "unknown zone" message is about the text that was rejected; drop it
+        // once the user edits or picks something else.
+        CityPicker.AddHandler(
+            System.Windows.Controls.Primitives.TextBoxBase.TextChangedEvent,
+            new System.Windows.Controls.TextChangedEventHandler((_, _) => CityError.IsOpen = false));
 
         LoadFromConfig(ConfigModel.Load(out var status));
         // Read back from the controls, so normalisation they apply (clamped
@@ -174,13 +179,24 @@ public partial class MainWindow : FluentWindow
                 m => string.Equals(m.Label, text, StringComparison.OrdinalIgnoreCase));
             if (known != null)
                 toAdd = new CityModel { Label = known.Label, Tz = known.Tz };
+            else if (TimeZoneIds.TryNormalize(text, out var tz))
+                // ...otherwise treat the text as a raw IANA id (e.g. "Asia/Tokyo"),
+                // stored in the canonical case the gadget's lookup requires.
+                toAdd = new CityModel { Label = LabelFromTz(tz), Tz = tz };
             else
-                // ...otherwise treat the text as a raw IANA id (e.g. "Asia/Tokyo").
-                toAdd = new CityModel { Label = LabelFromTz(text), Tz = text };
+            {
+                // A typo would otherwise be saved and show as --:-- (#29).
+                CityError.Message =
+                    $"\"{text}\" はタイムゾーン名として認識できません。" +
+                    "一覧から選ぶか、Asia/Tokyo のような IANA 名を入力してください。";
+                CityError.IsOpen = true;
+                return;
+            }
         }
 
         if (toAdd != null && !string.IsNullOrWhiteSpace(toAdd.Tz))
         {
+            CityError.IsOpen = false;
             _cities.Add(toAdd);
             CitiesList.SelectedItem = toAdd;
             CityPicker.Text = "";
