@@ -12,6 +12,10 @@ public sealed class CityModel
     [JsonPropertyName("tz")]    public string Tz { get; set; } = "";
 
     [JsonIgnore] public string Display => string.IsNullOrWhiteSpace(Label) ? Tz : $"{Label}  ({Tz})";
+
+    // The gadget shows --:-- for a zone it cannot resolve; the city list flags
+    // such entries (e.g. hand-edited into config.json) so the user can see why.
+    [JsonIgnore] public bool HasUnknownTz => !TimeZoneIds.IsValid(Tz);
 }
 
 public enum ConfigLoadStatus

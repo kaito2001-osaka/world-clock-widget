@@ -11,6 +11,10 @@
         WindowBackdropType="Mica"
         WindowCornerPreference="Round">
 
+    <ui:FluentWindow.Resources>
+        <BooleanToVisibilityConverter x:Key="BoolToVisibility" />
+    </ui:FluentWindow.Resources>
+
     <Grid>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
@@ -45,12 +49,18 @@
                                         <Grid.ColumnDefinitions>
                                             <ColumnDefinition Width="*" />
                                             <ColumnDefinition Width="Auto" />
+                                            <ColumnDefinition Width="Auto" />
                                         </Grid.ColumnDefinitions>
                                         <TextBlock Grid.Column="0" Text="{Binding Label}"
                                                    FontWeight="SemiBold" VerticalAlignment="Center" />
                                         <TextBlock Grid.Column="1" Text="{Binding Tz}"
                                                    Opacity="0.6" VerticalAlignment="Center"
                                                    HorizontalAlignment="Right" Margin="12,0,0,0" />
+                                        <ui:SymbolIcon Grid.Column="2" Symbol="Warning24"
+                                                       Foreground="{DynamicResource SystemFillColorCautionBrush}"
+                                                       VerticalAlignment="Center" Margin="8,0,0,0"
+                                                       Visibility="{Binding HasUnknownTz, Converter={StaticResource BoolToVisibility}}"
+                                                       ToolTip="このタイムゾーン名は認識できないため、ガジェットには --:-- と表示されます" />
                                     </Grid>
                                 </DataTemplate>
                             </ListView.ItemTemplate>
@@ -71,6 +81,10 @@
                             <ui:Button Grid.Column="2" x:Name="RemoveButton" Content="削除"
                                        Margin="8,0,0,0" Click="OnRemoveCity" />
                         </Grid>
+                        <ui:InfoBar x:Name="CityError" Severity="Error"
+                                    IsClosable="False" IsOpen="False"
+                                    Title="都市を追加できません"
+                                    Margin="0,8,0,0" />
                         <Grid Margin="0,8,0,0">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*" />
