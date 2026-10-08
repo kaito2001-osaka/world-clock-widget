@@ -7,6 +7,7 @@ add_executable(WorldClockTests
     test_textformat.cpp
     test_timeengine.cpp
     test_timercadence.cpp
+    test_visibility.cpp
     test_windowplacement.cpp
 )
 

@@ -15,6 +15,7 @@ add_library(worldclock_core STATIC
     TextFormat.cpp
     TimeEngine.cpp
     TimerCadence.cpp
+    Visibility.cpp
     WindowPlacement.cpp
 )
 target_include_directories(worldclock_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
@@ -35,7 +36,7 @@ add_executable(WorldClockGadget WIN32
 
 target_link_libraries(WorldClockGadget PRIVATE
     worldclock_core
-    d2d1 dwrite user32 gdi32 shell32 ole32 advapi32
+    d2d1 dwrite user32 gdi32 shell32 ole32 advapi32 wtsapi32
 )
 
 if (MSVC)
