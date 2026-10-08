@@ -6,6 +6,7 @@
 #include "resource.h"
 
 #include <shellapi.h>
+#include <wtsapi32.h>
 #include <string>
 #include <chrono>
 #include <vector>
@@ -129,6 +130,9 @@ bool GadgetWindow::Create(HINSTANCE hInst) {
 
     ShowWindow(hwnd_, SW_SHOWNOACTIVATE);
     StartTimer();
+    // After the timer, so a display that is already off stops it again: the
+    // current state is sent right after registering.
+    RegisterVisibilityNotifications();
     StartWatcher();
     if (loaded.status != ConfigLoadStatus::Ok)
         OnConfigLoadFailed(loaded.status);
@@ -171,8 +175,8 @@ LRESULT GadgetWindow::HandleMessage(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
 
         // The clock jumped (a clock change, or resume from sleep). The pending
         // timer was aimed with the old time, so waiting for it could leave the
-        // stale time up for a whole period. Redraw now and re-aim. Turning
-        // rendering back on when the display wakes (#18) should go this way too.
+        // stale time up for a whole period. Redraw now and re-aim. While hidden
+        // Tick does nothing; showing the window again redraws anyway.
         case WM_TIMECHANGE:
             lastShown_.reset();
             Tick();
@@ -182,8 +186,20 @@ LRESULT GadgetWindow::HandleMessage(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
             if (wParam == PBT_APMRESUMEAUTOMATIC) {
                 lastShown_.reset();
                 Tick();
+            } else if (wParam == PBT_POWERSETTINGCHANGE) {
+                const auto* s = reinterpret_cast<const POWERBROADCAST_SETTING*>(lParam);
+                if (s && s->PowerSetting == GUID_SESSION_DISPLAY_STATUS
+                      && s->DataLength >= sizeof(DWORD)) {
+                    DWORD status;
+                    memcpy(&status, s->Data, sizeof(status));
+                    if (const auto e = DisplayStatusEvent(status)) OnVisibilityEvent(*e);
+                }
             }
             return TRUE;
+
+        case WM_WTSSESSION_CHANGE:
+            if (const auto e = SessionChangeEvent(wParam)) OnVisibilityEvent(*e);
+            return 0;
 
         // A monitor was removed or resized, or the taskbar moved, while we are
         // up. The startup clamp has long since run, so re-check here. Setting
@@ -240,6 +256,7 @@ LRESULT GadgetWindow::HandleMessage(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
             KillTimer(hwnd, TIMER_ID);
             KillTimer(hwnd, RELOAD_RETRY_TIMER_ID);
             KillTimer(hwnd, DISPLAY_SETTLE_TIMER_ID);
+            UnregisterVisibilityNotifications();
             PostQuitMessage(0);
             return 0;
     }
@@ -309,12 +326,51 @@ void GadgetWindow::ArmTimer() {
 }
 
 void GadgetWindow::Tick() {
+    // A clock change, resume or config reload while hidden must not re-arm the
+    // timer; becoming visible redraws and re-arms instead.
+    if (!IsVisible(visibility_)) return;
     const auto now = std::chrono::system_clock::now();
     if (NeedsRedraw(lastShown_, now, config_.showSeconds)) {
         lastShown_ = DisplayedInstant(now, config_.showSeconds);
         RenderNow();
     }
     ArmTimer();   // re-aim at the next boundary
+}
+
+// Display off, session locked, remote session disconnected: nobody sees the
+// frames, so stop drawing them. If either registration fails the gadget just
+// keeps rendering through that state, as it did before.
+void GadgetWindow::RegisterVisibilityNotifications() {
+    displayNotify_ = RegisterPowerSettingNotification(hwnd_, &GUID_SESSION_DISPLAY_STATUS,
+                                                      DEVICE_NOTIFY_WINDOW_HANDLE);
+    sessionNotify_ = WTSRegisterSessionNotification(hwnd_, NOTIFY_FOR_THIS_SESSION) != FALSE;
+}
+
+void GadgetWindow::UnregisterVisibilityNotifications() {
+    if (displayNotify_) {
+        UnregisterPowerSettingNotification(displayNotify_);
+        displayNotify_ = nullptr;
+    }
+    if (sessionNotify_) {
+        WTSUnRegisterSessionNotification(hwnd_);
+        sessionNotify_ = false;
+    }
+}
+
+void GadgetWindow::OnVisibilityEvent(VisibilityEvent e) {
+    switch (ApplyVisibilityEvent(visibility_, e)) {
+        case VisibilityTransition::Hidden:
+            KillTimer(hwnd_, TIMER_ID);
+            break;
+        case VisibilityTransition::Shown:
+            // Draw before anything else can be seen, then re-aim: the last
+            // frame on the layered window is from when it was hidden.
+            lastShown_.reset();
+            Tick();
+            break;
+        case VisibilityTransition::None:
+            break;
+    }
 }
 
 void GadgetWindow::ReloadConfig() {

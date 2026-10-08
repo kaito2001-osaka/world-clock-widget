@@ -10,6 +10,7 @@
 
 #include "Config.hpp"
 #include "Renderer.hpp"
+#include "Visibility.hpp"
 
 class GadgetWindow {
 public:
@@ -37,7 +38,10 @@ private:
     void RescueFromOffscreen();   // after a monitor change; does not save
     void StartTimer();
     void ArmTimer();   // one-shot aimed at the next display boundary
-    void Tick();       // redraw if the displayed instant moved, then re-arm
+    void Tick();       // redraw if the displayed instant moved, then re-arm; no-op while hidden
+    void RegisterVisibilityNotifications();
+    void UnregisterVisibilityNotifications();
+    void OnVisibilityEvent(VisibilityEvent e);
     void ReloadConfig();
     void OnConfigLoadFailed(ConfigLoadStatus status);
     void ShowWarning(const std::wstring& text);
@@ -74,6 +78,12 @@ private:
 
     // The instant last drawn (see DisplayedInstant); reset to force a redraw.
     std::optional<std::chrono::system_clock::time_point> lastShown_;
+
+    // Display off / session locked / disconnected: the tick is stopped until
+    // someone can see the window again.
+    Visibility   visibility_;
+    HPOWERNOTIFY displayNotify_ = nullptr;
+    bool         sessionNotify_ = false;
 
     // A failed load never replaces what is on screen. It is retried a few
     // times (the file may be mid-write or briefly locked), then reported once
