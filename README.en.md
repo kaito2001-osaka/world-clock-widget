@@ -208,6 +208,43 @@ build_clock.cmd                        REM C++ gadget only
 dotnet build src\settings -c Release   REM settings app only
 ```
 
+### Measuring (for developers)
+
+The gadget draws once a second, so comparing its process CPU time over a few minutes is noise.
+Render-path changes are measured with the benchmark, and memory with the footprint script.
+
+```bat
+run_bench.cmd                  REM per-phase timing table
+run_bench.cmd --frames 300     REM more frames per row
+```
+
+`WorldClockBench` drives the real renderer against a hidden layered window with synthetic time,
+1 s per frame. Each row is one configuration (digital/analog × vertical/horizontal × seconds ×
+size × DPI 96/144/192 × 4/8 cities). It prints the surface size, the median and p95 of
+`UpdateFrame`, `BeginDraw`…`EndDraw`, `CopyPixels` and the present, and the `operator new` calls
+per frame. The timing hooks exist only in the benchmark's own build of `Renderer.cpp`
+(`WORLDCLOCK_BENCH`); the product exe is unaffected.
+
+**Golden buffers** — rendering changes must not change the output. The benchmark saves the
+presented buffer (premultiplied BGRA, alpha included) for a fixed time and set of configurations,
+and compares it byte for byte. Output depends on the installed fonts and DirectWrite, so goldens
+are not committed: generate them on `main`, then check on your branch.
+
+```bat
+git checkout main
+run_bench.cmd --write-golden   REM writes build\golden\*.bgra
+git checkout <your-branch>
+run_bench.cmd --check-golden   REM exit code 1 and *.actual.bgra on a mismatch
+```
+
+**Resident footprint** — start the gadget, leave it for 5 minutes, then take 3 samples one minute
+apart and compare the medians.
+
+```powershell
+.\tools\measure-footprint.ps1             # private bytes, working set, threads, handles, CPU ms/s
+.\tools\measure-footprint.ps1 -Modules    # plus the loaded DLLs
+```
+
 ---
 
 ## Architecture
@@ -268,7 +305,9 @@ src/clock/                  C++ gadget
   Config.{hpp,cpp}            config.json / state.json I/O
   Startup.{hpp,cpp}           launch-at-startup registration
   json.hpp                    minimal dependency-free JSON parser
+  bench/                      render benchmark and golden buffers (run_bench.cmd)
 src/settings/               C# WPF settings app
+tools/                      developer scripts (resident footprint measurement)
 installer/                  Inno Setup script
 icons/                      application icons
 ```

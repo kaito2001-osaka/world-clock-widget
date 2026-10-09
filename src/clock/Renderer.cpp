@@ -15,6 +15,18 @@
 using Microsoft::WRL::ComPtr;
 using namespace std::chrono;
 
+// Per-phase timing for WorldClockBench. Expands to nothing in the product exe.
+#ifdef WORLDCLOCK_BENCH
+#define BENCH_STAMP(i)                                       \
+    do {                                                     \
+        LARGE_INTEGER qpc_;                                  \
+        QueryPerformanceCounter(&qpc_);                      \
+        bench_.t[i] = qpc_.QuadPart;                         \
+    } while (0)
+#else
+#define BENCH_STAMP(i) ((void)0)
+#endif
+
 namespace {
 
 std::wstring ToW(const std::string& s) {
@@ -365,11 +377,17 @@ void Renderer::Render(system_clock::time_point now) {
     // Block sizes are worst-case and depend only on the config, DPI and font,
     // so the layout is already current; recomputing per frame would only
     // re-derive the same numbers.
+#ifdef WORLDCLOCK_BENCH
+    bench_ = {};
+#endif
+    BENCH_STAMP(0);
     UpdateFrame(now);
+    BENCH_STAMP(1);
 
     int w = desired_.cx, h = desired_.cy;
     if (!EnsureSurface(w, h) || !rt_) return;
 
+    BENCH_STAMP(2);
     rt_->BeginDraw();
     rt_->SetTransform(D2D1::Matrix3x2F::Identity());
     rt_->Clear(D2D1::ColorF(0, 0.f)); // fully transparent
@@ -387,6 +405,7 @@ void Renderer::Render(system_clock::time_point now) {
         surface_ = { 0, 0 };
         return;
     }
+    BENCH_STAMP(3);
 
     // Copy the WIC pixels (premultiplied BGRA, alpha preserved) into the DIB
     // backing the layered window. A GDI DC render target would drop the alpha
@@ -399,6 +418,7 @@ void Renderer::Render(system_clock::time_point now) {
                                           static_cast<BYTE*>(bits_))))
             return;
     }
+    BENCH_STAMP(4);
 
     // Present via UpdateLayeredWindow: keep current position, set size, and
     // apply overall opacity through the constant source alpha.
@@ -413,6 +433,7 @@ void Renderer::Render(system_clock::time_point now) {
     bf.AlphaFormat = AC_SRC_ALPHA;
     UpdateLayeredWindow(hwnd_, screen, &dst, &size, memDC_, &src, 0, &bf, ULW_ALPHA);
     ReleaseDC(nullptr, screen);
+    BENCH_STAMP(5);
 }
 
 void Renderer::DrawDigital(ID2D1RenderTarget* rt) {

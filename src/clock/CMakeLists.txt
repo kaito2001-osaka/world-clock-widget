@@ -5,6 +5,9 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 option(WORLDCLOCK_BUILD_TESTS "Build the unit tests" ON)
+# Off by default: run_bench.cmd turns it on. It compiles Renderer.cpp a second
+# time with WORLDCLOCK_BENCH, so the product exe never carries the hooks.
+option(WORLDCLOCK_BUILD_BENCH "Build the render benchmark" OFF)
 
 # Logic with no Direct2D / window dependency. Split into a library so the unit
 # tests can link it; Renderer.cpp and GadgetWindow.cpp stay in the exe because
@@ -55,4 +58,8 @@ endif()
 if (WORLDCLOCK_BUILD_TESTS)
     enable_testing()
     add_subdirectory(tests)
+endif()
+
+if (WORLDCLOCK_BUILD_BENCH)
+    add_subdirectory(bench)
 endif()
