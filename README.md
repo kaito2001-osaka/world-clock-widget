@@ -206,6 +206,43 @@ build_clock.cmd                        REM C++ ガジェット本体のみ
 dotnet build src\settings -c Release   REM 設定アプリのみ
 ```
 
+### 計測（開発者向け）
+
+ガジェットは 1 秒に 1 回しか描画しないため、数分間のプロセス CPU 時間を比べても差はノイズに
+埋もれます。描画まわりの変更はベンチマークで、メモリは計測スクリプトで測ります。
+
+```bat
+run_bench.cmd                  REM フェーズごとの所要時間の表
+run_bench.cmd --frames 300     REM 1 行あたりのフレーム数を増やす
+```
+
+`WorldClockBench` は、非表示の layered window に対して本物の Renderer を動かし、合成時刻を
+1 フレームごとに 1 秒進めて描画します。表の 1 行が 1 つの設定です（デジタル/アナログ × 縦/横 ×
+秒表示 × サイズ × DPI 96/144/192 × 4/8 都市）。各行には、描画面のサイズ、`UpdateFrame`・
+`BeginDraw`〜`EndDraw`・`CopyPixels`・提示それぞれの中央値と p95、1 フレームあたりの
+`operator new` の回数が出ます。計測用のフックはベンチ用にビルドした `Renderer.cpp`
+（`WORLDCLOCK_BENCH`）にしかなく、製品版の exe には影響しません。
+
+**ゴールデンバッファ** — 描画系の変更では、出力が変わってはいけません。ベンチは、固定の時刻と
+設定で描いたバッファ（アルファを含む事前乗算 BGRA。`UpdateLayeredWindow` に渡すものそのもの）を
+保存し、バイト単位で比較します。出力はインストール済みのフォントや DirectWrite に依存するため、
+ゴールデンはリポジトリに入れません。`main` で生成し、作業ブランチで比較します。
+
+```bat
+git checkout main
+run_bench.cmd --write-golden   REM build\golden\*.bgra に保存
+git checkout <作業ブランチ>
+run_bench.cmd --check-golden   REM 不一致なら終了コード 1、*.actual.bgra を出力
+```
+
+**常駐時のフットプリント** — ガジェットを起動して 5 分置き、1 分おきに 3 回採取して、
+中央値を比べます。
+
+```powershell
+.\tools\measure-footprint.ps1             # Private / ワーキングセット / スレッド / ハンドル / CPU ms/s
+.\tools\measure-footprint.ps1 -Modules    # ロード済み DLL の一覧も出す
+```
+
 ---
 
 ## アーキテクチャ
@@ -264,7 +301,9 @@ src/clock/                  C++ ガジェット本体
   Config.{hpp,cpp}            config.json / state.json の読み書き
   Startup.{hpp,cpp}           自動起動の登録・解除
   json.hpp                    依存なしの最小 JSON パーサ
+  bench/                      描画ベンチマークとゴールデンバッファ（run_bench.cmd）
 src/settings/               C# WPF 設定アプリ
+tools/                      開発用スクリプト（常駐時のフットプリント計測）
 installer/                  Inno Setup スクリプト
 icons/                      アプリアイコン
 ```

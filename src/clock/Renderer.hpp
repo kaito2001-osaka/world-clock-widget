@@ -37,7 +37,23 @@ public:
     // Resizes the layered surface (and window) to DesiredClientSize().
     void Render(std::chrono::system_clock::time_point now);
 
+#ifdef WORLDCLOCK_BENCH
+    // Instrumentation for WorldClockBench only; the product exe is compiled
+    // without it, so neither its code nor this class's layout changes.
+    // QPC stamps taken through the last Render(): start, after UpdateFrame,
+    // before BeginDraw, after EndDraw, after CopyPixels, after the present.
+    // A frame that returned early leaves the later stamps at zero.
+    struct BenchStamps { LONGLONG t[6]; };
+    const BenchStamps& BenchLastFrame() const { return bench_; }
+    // The DIB handed to UpdateLayeredWindow, i.e. exactly what is presented.
+    const void* BenchPixels() const { return bits_; }
+    SIZE BenchSurface() const { return surface_; }
+#endif
+
 private:
+#ifdef WORLDCLOCK_BENCH
+    BenchStamps bench_{};
+#endif
     Microsoft::WRL::ComPtr<ID2D1Factory>      d2dFactory_;
     Microsoft::WRL::ComPtr<IDWriteFactory>    dwFactory_;
     Microsoft::WRL::ComPtr<IWICImagingFactory> wicFactory_;
