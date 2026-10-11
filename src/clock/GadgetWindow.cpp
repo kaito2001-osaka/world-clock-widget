@@ -116,11 +116,10 @@ bool GadgetWindow::Create(HINSTANCE hInst) {
                             nullptr, nullptr, hInst, nullptr);
     if (!hwnd_) return false;
 
-    if (!renderer_.Init(hwnd_)) {
+    if (!renderer_.Init(hwnd_, config_)) {
         MessageBoxW(nullptr, L"Direct2D の初期化に失敗しました。", L"World Clock", MB_ICONERROR);
         return false;
     }
-    renderer_.SetConfig(config_);
     ApplyTopmost();
     // Reconcile the Run key only against a config that was actually read. The
     // defaults say "no autostart", so applying them would unregister it.

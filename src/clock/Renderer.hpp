@@ -26,7 +26,9 @@
 
 class Renderer {
 public:
-    bool Init(HWND hwnd);
+    // Takes the config up front so the fonts are measured and the panel laid
+    // out once, for the config that will actually be shown.
+    bool Init(HWND hwnd, const Config& cfg);
     void Shutdown();
 
     void SetConfig(const Config& cfg);  // recomputes layout
@@ -80,11 +82,23 @@ private:
         D2D1_SIZE_F  labelSize = { 0.f, 0.f };
         Microsoft::WRL::ComPtr<IDWriteTextLayout> labelLayout;
         Microsoft::WRL::ComPtr<IDWriteTextLayout> dateLayout;
-        std::wstring dateText;               // what dateLayout currently holds
+        // The day dateLayout was formatted from. Comparing fields rather than
+        // formatted strings keeps the steady-state frame allocation-free.
+        LocalTimeFields dateFields;
     };
     std::vector<CityVisual>      visuals_;
     std::vector<D2D1_SIZE_F>     sizes_;   // block size per city (config-level)
+    std::vector<ZoneClock>       clocks_;  // per city, caches its UTC offset
     std::vector<LocalTimeFields> lts_;     // per frame, reused between frames
+
+    // Scaled lengths the draw calls use, derived from the DPI and the size
+    // class in RecomputeLayout rather than re-derived every frame.
+    struct Metrics {
+        float pad = 0.f, lineGap = 0.f, cityGap = 0.f, corner = 0.f;
+        float faceD = 0.f, tickStroke = 0.f, hub = 0.f;
+        float hourHand = 0.f, minuteHand = 0.f, secondHand = 0.f;
+    };
+    Metrics m_;
     float        maxW_ = 0.f;              // widest block, for vertical layout
     std::wstring dateFormatW_;             // UTF-16 date pattern, converted once
 
@@ -112,7 +126,7 @@ private:
     void ReleaseDeviceResources();
     bool CreateTextFormats();       // false when a font could not be created
     void RecomputeWorstCaseSizes();
-    void RecomputeLayout();         // block sizes, maxW_, desired_
+    void RecomputeLayout();         // m_, block sizes, maxW_, desired_, clocks_
     void RebuildVisuals();          // labels + cached layouts, after a change
     void UpdateFrame(std::chrono::system_clock::time_point now);
     float Sc(float logical) const;  // logical px -> device px

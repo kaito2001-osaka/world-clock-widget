@@ -251,3 +251,58 @@ TEST(measurement_date_handles_an_empty_pattern) {
     CHECK_EQ(cands.size(), (size_t)1);
     CHECK_EQ(cands[0], std::wstring(L""));
 }
+
+// ---- FormatTimeTo / SameDate ---------------------------------------------------
+
+TEST(format_time_to_matches_format_time) {
+    // The buffer version is what the renderer draws every frame; it must say
+    // exactly what FormatTime says, in every clock format.
+    const LocalTimeFields times[] = {
+        Fields(2026, 6, 12, 5, 0, 0, 0),    Fields(2026, 6, 12, 5, 9, 5, 30),
+        Fields(2026, 6, 12, 5, 12, 30, 0),  Fields(2026, 6, 12, 5, 23, 59, 59),
+        LocalTimeFields{},                   // invalid
+    };
+    for (const LocalTimeFields& f : times)
+        for (int hf : { 12, 24 })
+            for (bool sec : { false, true }) {
+                wchar_t buf[kFormatTimeCapacity];
+                const size_t n = FormatTimeTo(f, Cfg(hf, sec), buf, kFormatTimeCapacity);
+                CHECK_EQ(std::wstring(buf, n), FormatTime(f, Cfg(hf, sec)));
+                CHECK_EQ(buf[n], L'\0');
+            }
+}
+
+TEST(format_time_to_longest_string) {
+    wchar_t buf[kFormatTimeCapacity];
+    const size_t n = FormatTimeTo(Fields(2026, 6, 12, 5, 23, 59, 59), Cfg(12, true),
+                                  buf, kFormatTimeCapacity);
+    CHECK_EQ(std::wstring(buf, n), std::wstring(L"11:59:59 PM"));
+    CHECK_EQ(n, (size_t)11);
+}
+
+TEST(format_time_to_reports_a_buffer_too_small) {
+    wchar_t buf[4] = { L'x', L'x', L'x', L'x' };
+    CHECK_EQ(FormatTimeTo(Fields(2026, 6, 12, 5, 23, 59, 59), Cfg(24, true), buf, 4), (size_t)0);
+    CHECK_EQ(buf[0], L'\0');
+}
+
+TEST(same_date_ignores_the_time_of_day) {
+    CHECK(SameDate(Fields(2026, 6, 12, 5, 0, 0, 0), Fields(2026, 6, 12, 5, 23, 59, 59)));
+}
+
+TEST(same_date_sees_every_date_field) {
+    const LocalTimeFields base = Fields(2026, 6, 12, 5, 9, 0, 0);
+    CHECK(!SameDate(base, Fields(2027, 6, 12, 5, 9, 0, 0)));
+    CHECK(!SameDate(base, Fields(2026, 7, 12, 5, 9, 0, 0)));
+    CHECK(!SameDate(base, Fields(2026, 6, 13, 5, 9, 0, 0)));
+    CHECK(!SameDate(base, Fields(2026, 6, 12, 6, 9, 0, 0)));
+}
+
+TEST(same_date_and_validity) {
+    // Invalid fields format to the empty string whatever else they hold.
+    LocalTimeFields badA, badB;
+    badB.year = 2026; badB.day = 3;
+    CHECK(SameDate(badA, badB));
+    CHECK(!SameDate(badA, Friday()));
+    CHECK(!SameDate(Friday(), badA));
+}

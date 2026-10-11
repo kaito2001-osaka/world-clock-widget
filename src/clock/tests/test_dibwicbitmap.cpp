@@ -266,3 +266,123 @@ TEST(dibwic_d2d_writes_full_transparency) {
     CHECK(AllPixels(buf, 0, 0, 0, 0));
     CHECK(PaddingIntact(buf));
 }
+
+// ---- lock reuse -----------------------------------------------------------
+// Direct2D locks the bitmap at every EndDraw. The bitmap keeps one lock inside
+// itself and hands that out again, so a steady-state frame does not allocate;
+// only a lock taken while another is out gets an object of its own.
+
+TEST(dibwic_lock_is_reused_once_released) {
+    auto buf = PaddedBuffer();
+    ComPtr<IWICBitmap> bmp = Wrap(buf);
+    IWICBitmapLock* firstAddr = nullptr;
+    {
+        ComPtr<IWICBitmapLock> lock;
+        CHECK(SUCCEEDED(bmp->Lock(nullptr, WICBitmapLockWrite, &lock)));
+        firstAddr = lock.Get();
+    }
+    ComPtr<IWICBitmapLock> again;
+    CHECK(SUCCEEDED(bmp->Lock(nullptr, WICBitmapLockWrite, &again)));
+    CHECK(again.Get() == firstAddr);
+}
+
+TEST(dibwic_reused_lock_reports_the_new_rect) {
+    auto buf = PaddedBuffer();
+    ComPtr<IWICBitmap> bmp = Wrap(buf);
+    {
+        const WICRect rc = { 1, 2, 3, 1 };
+        ComPtr<IWICBitmapLock> lock;
+        CHECK(SUCCEEDED(bmp->Lock(&rc, WICBitmapLockRead, &lock)));
+    }
+    ComPtr<IWICBitmapLock> lock;
+    CHECK(SUCCEEDED(bmp->Lock(nullptr, WICBitmapLockWrite, &lock)));
+    UINT w = 0, h = 0, size = 0;
+    WICInProcPointer data = nullptr;
+    CHECK(SUCCEEDED(lock->GetSize(&w, &h)));
+    CHECK(SUCCEEDED(lock->GetDataPointer(&size, &data)));
+    CHECK_EQ(w, kW);
+    CHECK_EQ(h, kH);
+    CHECK(data == buf.data());
+    CHECK_EQ(size, kStride * (kH - 1) + kW * 4);
+}
+
+TEST(dibwic_concurrent_locks_are_separate) {
+    auto buf = PaddedBuffer();
+    ComPtr<IWICBitmap> bmp = Wrap(buf);
+    const WICRect top = { 0, 0, (INT)kW, 1 };
+    const WICRect bottom = { 0, 2, (INT)kW, 1 };
+    ComPtr<IWICBitmapLock> a, b;
+    CHECK(SUCCEEDED(bmp->Lock(&top, WICBitmapLockRead, &a)));
+    CHECK(SUCCEEDED(bmp->Lock(&bottom, WICBitmapLockRead, &b)));
+    CHECK(a.Get() != b.Get());
+
+    // The second lock must not have re-aimed the first.
+    UINT size = 0;
+    WICInProcPointer da = nullptr, db = nullptr;
+    CHECK(SUCCEEDED(a->GetDataPointer(&size, &da)));
+    CHECK(SUCCEEDED(b->GetDataPointer(&size, &db)));
+    CHECK(da == buf.data());
+    CHECK(db == buf.data() + 2 * kStride);
+
+    // With the first returned, the next lock reuses it.
+    IWICBitmapLock* firstAddr = a.Get();
+    a.Reset();
+    ComPtr<IWICBitmapLock> c;
+    CHECK(SUCCEEDED(bmp->Lock(nullptr, WICBitmapLockRead, &c)));
+    CHECK(c.Get() == firstAddr);
+}
+
+TEST(dibwic_second_lock_also_keeps_the_bitmap_alive) {
+    auto buf = PaddedBuffer();
+    ComPtr<IWICBitmapLock> first, second;
+    {
+        ComPtr<IWICBitmap> bmp = Wrap(buf);
+        CHECK(SUCCEEDED(bmp->Lock(nullptr, WICBitmapLockWrite, &first)));
+        CHECK(SUCCEEDED(bmp->Lock(nullptr, WICBitmapLockWrite, &second)));
+    }
+    // Either order of release must leave the other working.
+    first.Reset();
+    UINT stride = 0;
+    CHECK(SUCCEEDED(second->GetStride(&stride)));
+    CHECK_EQ(stride, kStride);
+}
+
+TEST(dibwic_lock_answers_to_its_interfaces) {
+    auto buf = PaddedBuffer();
+    ComPtr<IWICBitmap> bmp = Wrap(buf);
+    ComPtr<IWICBitmapLock> lock;
+    CHECK(SUCCEEDED(bmp->Lock(nullptr, WICBitmapLockRead, &lock)));
+    ComPtr<IUnknown> unk;
+    ComPtr<IWICBitmapLock> same;
+    ComPtr<IWICBitmap> notALock;
+    CHECK(SUCCEEDED(lock.As(&unk)));
+    CHECK(SUCCEEDED(lock.As(&same)));
+    CHECK(same.Get() == lock.Get());
+    CHECK_EQ(lock.As(&notALock), E_NOINTERFACE);
+}
+
+TEST(dibwic_d2d_draws_repeatedly_through_the_reused_lock) {
+    // Two frames through one render target, the way the renderer runs.
+    auto buf = PaddedBuffer();
+    ComPtr<IWICBitmap> bmp = Wrap(buf);
+    ComPtr<ID2D1Factory> factory;
+    CHECK(SUCCEEDED(D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, factory.GetAddressOf())));
+    const D2D1_RENDER_TARGET_PROPERTIES props = D2D1::RenderTargetProperties(
+        D2D1_RENDER_TARGET_TYPE_DEFAULT,
+        D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED),
+        96.f, 96.f);
+    ComPtr<ID2D1RenderTarget> rt;
+    CHECK(SUCCEEDED(factory->CreateWicBitmapRenderTarget(bmp.Get(), props, &rt)));
+    if (!rt) return;
+
+    rt->BeginDraw();
+    rt->Clear(D2D1::ColorF(0x336699, 1.f));
+    CHECK(SUCCEEDED(rt->EndDraw()));
+    CHECK(AllPixels(buf, 0x99, 0x66, 0x33, 0xFF));
+
+    rt->BeginDraw();
+    rt->Clear(D2D1::ColorF(0, 0.f));
+    CHECK(SUCCEEDED(rt->EndDraw()));
+    CHECK(AllPixels(buf, 0, 0, 0, 0));
+    CHECK(PaddingIntact(buf));
+}

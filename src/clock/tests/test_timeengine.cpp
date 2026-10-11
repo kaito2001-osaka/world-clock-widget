@@ -124,10 +124,11 @@ TEST(compute_local_does_not_mix_up_zones) {
 }
 
 // ---- offset cache equivalence ---------------------------------------------
-// ComputeLocal caches each zone's UTC offset and the window it holds for, so
-// the steady state costs no tzdb lookup at all. The risk is a stale offset
-// across a DST transition, which no one would notice by eye for months --
-// so these compare the cached path against a freshly computed reference.
+// ZoneClock caches a zone's UTC offset and the window it holds for, so the
+// steady state costs no tzdb lookup at all. The risk is a stale offset across
+// a DST transition, which no one would notice by eye for months -- so these
+// compare the cached path (and ComputeLocal) against a freshly computed
+// reference.
 
 namespace {
 
@@ -234,5 +235,109 @@ TEST(cache_still_rejects_unknown_zones_after_use) {
         CHECK_EQ(ComputeLocal("Not/AZone", t).valid, false);
         CHECK_EQ(ComputeLocal("Asia/Tokyo", t).valid, true);
         CHECK_EQ(ComputeLocal("", t).valid, false);
+    }
+}
+
+// ---- ZoneClock ---------------------------------------------------------------
+// One ZoneClock per sweep, stepping through time the way the renderer does,
+// so the cached offset is actually reused (and has to be dropped) as it goes.
+
+namespace {
+
+void SweepClockAgainstReference(const char* tz, system_clock::time_point from,
+                                system_clock::time_point to, seconds step) {
+    ZoneClock clock{ tz };
+    for (auto t = from; t < to; t += step)
+        CHECK(SameFields(clock.At(t), Reference(tz, t)));
+}
+
+} // namespace
+
+TEST(zone_clock_first_call_matches_reference) {
+    // Nothing is cached yet, so the first answer has to come from a lookup.
+    auto t = Utc(2026, 1, 15, 3, 29, 47);
+    for (const char* z : { "Asia/Tokyo", "America/Los_Angeles", "Europe/London", "Etc/UTC" }) {
+        ZoneClock clock{ z };
+        CHECK(SameFields(clock.At(t), Reference(z, t)));
+    }
+}
+
+TEST(zone_clock_across_us_spring_forward) {
+    // 2026-03-08 07:00Z: 02:00 EST becomes 03:00 EDT.
+    SweepClockAgainstReference("America/New_York",
+                               Utc(2026, 3, 8, 6, 58, 0), Utc(2026, 3, 8, 7, 2, 0), seconds{ 1 });
+    ZoneClock clock{ "America/New_York" };
+    LocalTimeFields before = clock.At(Utc(2026, 3, 8, 6, 59, 59));
+    LocalTimeFields after  = clock.At(Utc(2026, 3, 8, 7, 0, 0));
+    CHECK_EQ(before.hour, 1);
+    CHECK_EQ(before.second, 59);
+    CHECK_EQ(after.hour, 3);
+    CHECK_EQ(after.minute, 0);
+}
+
+TEST(zone_clock_across_us_fall_back) {
+    // 2026-11-01 06:00Z: 02:00 EDT becomes 01:00 EST.
+    SweepClockAgainstReference("America/New_York",
+                               Utc(2026, 11, 1, 5, 58, 0), Utc(2026, 11, 1, 6, 2, 0), seconds{ 1 });
+    ZoneClock clock{ "America/New_York" };
+    CHECK_EQ(clock.At(Utc(2026, 11, 1, 5, 59, 59)).hour, 1);
+    CHECK_EQ(clock.At(Utc(2026, 11, 1, 6, 0, 0)).hour, 1);   // the hour repeats
+    CHECK_EQ(clock.At(Utc(2026, 11, 1, 6, 0, 0)).minute, 0);
+}
+
+TEST(zone_clock_across_london_spring_forward) {
+    // 2026-03-29 01:00Z: 01:00 GMT becomes 02:00 BST.
+    SweepClockAgainstReference("Europe/London",
+                               Utc(2026, 3, 29, 0, 58, 0), Utc(2026, 3, 29, 1, 2, 0), seconds{ 1 });
+}
+
+TEST(zone_clock_across_half_hour_dst) {
+    // Lord Howe moves by 30 minutes; 2026-10-04 02:00 +10:30 becomes 02:30 +11:00
+    // (2026-10-03 15:30Z).
+    SweepClockAgainstReference("Australia/Lord_Howe",
+                               Utc(2026, 10, 3, 15, 28, 0), Utc(2026, 10, 3, 15, 32, 0), seconds{ 1 });
+}
+
+TEST(zone_clock_over_a_whole_year) {
+    const char* zones[] = {
+        "America/New_York", "Europe/London", "Asia/Tokyo", "Australia/Sydney",
+        "Asia/Kolkata", "Pacific/Chatham", "America/Santiago", "Australia/Lord_Howe",
+        "Etc/UTC",
+    };
+    for (const char* z : zones)
+        SweepClockAgainstReference(z, Utc(2026, 1, 1, 0, 0, 0), Utc(2027, 1, 1, 0, 0, 0),
+                                   seconds{ 3607 });
+}
+
+TEST(zone_clock_when_time_runs_backwards) {
+    // A clock set back across a transition leaves the cached window from
+    // below; the offset must be looked up again, not reused.
+    const char* tz = "America/New_York";
+    ZoneClock clock{ tz };
+    for (auto t = Utc(2026, 3, 8, 7, 2, 0); t > Utc(2026, 3, 8, 6, 58, 0); t -= seconds{ 1 })
+        CHECK(SameFields(clock.At(t), Reference(tz, t)));
+    for (auto t = Utc(2026, 11, 1, 6, 2, 0); t > Utc(2026, 11, 1, 5, 58, 0); t -= seconds{ 1 })
+        CHECK(SameFields(clock.At(t), Reference(tz, t)));
+}
+
+TEST(zone_clock_after_large_jumps) {
+    // Resume after months asleep, or a clock set years off, in both directions.
+    const char* tz = "Europe/London";
+    const system_clock::time_point stops[] = {
+        Utc(2026, 7, 15, 12, 0, 0), Utc(2030, 1, 15, 12, 0, 0), Utc(2026, 7, 15, 12, 0, 1),
+        Utc(2001, 12, 31, 23, 59, 59), Utc(2026, 1, 15, 0, 0, 0), Utc(2026, 7, 15, 12, 0, 2),
+    };
+    ZoneClock clock{ tz };
+    for (auto t : stops)
+        CHECK(SameFields(clock.At(t), Reference(tz, t)));
+}
+
+TEST(zone_clock_rejects_unknown_zones) {
+    auto t = Utc(2026, 6, 12, 0, 0, 0);
+    ZoneClock bad{ "Not/AZone" };
+    ZoneClock empty{ "" };
+    for (int i = 0; i < 3; ++i) {
+        CHECK_EQ(bad.At(t).valid, false);
+        CHECK_EQ(empty.At(t).valid, false);
     }
 }
