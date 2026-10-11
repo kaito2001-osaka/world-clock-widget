@@ -1,9 +1,11 @@
 // Direct2D / DirectWrite renderer for the gadget panel.
 //
-// Rendering model: we render into a 32-bit premultiplied-alpha DIB via an
-// ID2D1DCRenderTarget, then present with UpdateLayeredWindow. This gives true
+// Rendering model: we render into a 32-bit premultiplied-alpha DIB through a
+// Direct2D WIC bitmap render target whose bitmap is a view of the DIB's memory
+// (DibWicBitmap.hpp), then present with UpdateLayeredWindow. This gives true
 // per-pixel alpha (smooth rounded corners, clean anti-aliased text) plus an
-// overall window opacity applied through the layered blend's constant alpha.
+// overall window opacity applied through the layered blend's constant alpha,
+// with a single pixel buffer and no per-frame copy.
 //
 // Frame cost: everything that depends only on the config, the DPI and the font
 // is computed when one of those changes, not per frame. A steady-state frame
@@ -41,7 +43,8 @@ public:
     // Instrumentation for WorldClockBench only; the product exe is compiled
     // without it, so neither its code nor this class's layout changes.
     // QPC stamps taken through the last Render(): start, after UpdateFrame,
-    // before BeginDraw, after EndDraw, after CopyPixels, after the present.
+    // before BeginDraw, after EndDraw, a second stamp right after EndDraw
+    // (where a full-surface CopyPixels used to end), after the present.
     // A frame that returned early leaves the later stamps at zero.
     struct BenchStamps { LONGLONG t[6]; };
     const BenchStamps& BenchLastFrame() const { return bench_; }
@@ -56,8 +59,7 @@ private:
 #endif
     Microsoft::WRL::ComPtr<ID2D1Factory>      d2dFactory_;
     Microsoft::WRL::ComPtr<IDWriteFactory>    dwFactory_;
-    Microsoft::WRL::ComPtr<IWICImagingFactory> wicFactory_;
-    Microsoft::WRL::ComPtr<IWICBitmap>        wicBitmap_;     // PBGRA, per-size
+    Microsoft::WRL::ComPtr<IWICBitmap>        wicBitmap_;     // view of the DIB, per-size
     Microsoft::WRL::ComPtr<ID2D1RenderTarget> rt_;            // WIC bitmap target
 
     Microsoft::WRL::ComPtr<IDWriteTextFormat> fmtLabel_;

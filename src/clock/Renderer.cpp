@@ -1,4 +1,5 @@
 #include "Renderer.hpp"
+#include "DibWicBitmap.hpp"
 #include "TextFormat.hpp"
 #include "TimeEngine.hpp"
 
@@ -10,7 +11,6 @@
 
 #pragma comment(lib, "d2d1.lib")
 #pragma comment(lib, "dwrite.lib")
-#pragma comment(lib, "windowscodecs.lib")
 
 using Microsoft::WRL::ComPtr;
 using namespace std::chrono;
@@ -78,13 +78,6 @@ bool Renderer::Init(HWND hwnd) {
                                    reinterpret_cast<IUnknown**>(dwFactory_.GetAddressOf()))))
         return false;
 
-    // WIC factory. We render into a premultiplied-BGRA WIC bitmap (which keeps
-    // its alpha channel, unlike a GDI DC target) and copy it into the DIB that
-    // UpdateLayeredWindow presents.
-    if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER,
-                                IID_PPV_ARGS(wicFactory_.GetAddressOf()))))
-        return false;
-
     if (!CreateTextFormats()) return false;
     RecomputeLayout();
     RebuildVisuals();
@@ -96,6 +89,8 @@ void Renderer::Shutdown() {
     sizes_.clear();
     lts_.clear();
     ReleaseDeviceResources();
+    // The render target and its bitmap point into the DIB, so they go first.
+    rt_.Reset(); wicBitmap_.Reset();
     if (memDC_) {
         if (oldBmp_) SelectObject(memDC_, oldBmp_);
         DeleteDC(memDC_);
@@ -105,7 +100,6 @@ void Renderer::Shutdown() {
     bits_ = nullptr;              // the DIB it pointed into is gone
     surface_ = { 0, 0 };
     fmtLabel_.Reset(); fmtTime_.Reset(); fmtDate_.Reset();
-    rt_.Reset(); wicBitmap_.Reset(); wicFactory_.Reset();
     dwFactory_.Reset(); d2dFactory_.Reset();
 }
 
@@ -304,6 +298,12 @@ bool Renderer::EnsureSurface(int w, int h) {
     if (h < 1) h = 1;
     if (memDC_ && surface_.cx == w && surface_.cy == h) return true;
 
+    // The render target draws through a bitmap over the old DIB's memory, so
+    // it has to be gone before that memory is. The brushes belong to the
+    // render target, so they go with it.
+    ReleaseDeviceResources();
+    rt_.Reset(); wicBitmap_.Reset();
+
     if (memDC_) {
         if (oldBmp_) { SelectObject(memDC_, oldBmp_); oldBmp_ = nullptr; }
         DeleteDC(memDC_); memDC_ = nullptr;
@@ -328,12 +328,12 @@ bool Renderer::EnsureSurface(int w, int h) {
     if (!dib_) { DeleteDC(memDC_); memDC_ = nullptr; return false; }
     oldBmp_ = (HBITMAP)SelectObject(memDC_, dib_);
 
-    // WIC bitmap (premultiplied BGRA) + matching D2D render target. The brushes
-    // belong to the render target, so they go with it.
-    ReleaseDeviceResources();
-    wicBitmap_.Reset(); rt_.Reset();
-    if (FAILED(wicFactory_->CreateBitmap((UINT)w, (UINT)h, GUID_WICPixelFormat32bppPBGRA,
-                                         WICBitmapCacheOnLoad, wicBitmap_.GetAddressOf())))
+    // D2D renders into a WIC bitmap because a GDI DC target would drop the
+    // alpha. The bitmap is a view of the DIB's own memory, so EndDraw leaves
+    // the frame exactly where UpdateLayeredWindow reads it: no second buffer
+    // and no per-frame copy.
+    if (FAILED(CreateDibWicBitmap(bits_, (UINT)w, (UINT)h, (UINT)w * 4,
+                                  wicBitmap_.GetAddressOf())))
         return false;
     D2D1_RENDER_TARGET_PROPERTIES props = D2D1::RenderTargetProperties(
         D2D1_RENDER_TARGET_TYPE_DEFAULT,
@@ -406,18 +406,8 @@ void Renderer::Render(system_clock::time_point now) {
         return;
     }
     BENCH_STAMP(3);
-
-    // Copy the WIC pixels (premultiplied BGRA, alpha preserved) into the DIB
-    // backing the layered window. A GDI DC render target would drop the alpha
-    // here, which is why we go through WIC.
-    {
-        WICRect rc = { 0, 0, w, h };
-        UINT stride = (UINT)w * 4;
-        UINT bufSize = stride * (UINT)h;
-        if (FAILED(wicBitmap_->CopyPixels(&rc, stride, bufSize,
-                                          static_cast<BYTE*>(bits_))))
-            return;
-    }
+    // EndDraw wrote the frame straight into the DIB. Stamp 4 used to close a
+    // full-surface CopyPixels; it stays so the bench table keeps its columns.
     BENCH_STAMP(4);
 
     // Present via UpdateLayeredWindow: keep current position, set size, and
