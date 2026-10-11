@@ -3,6 +3,7 @@ add_executable(WorldClockTests
     test_framework.cpp
     test_benchstats.cpp
     test_config.cpp
+    test_dibwicbitmap.cpp
     test_configwatch.cpp
     test_json.cpp
     test_textformat.cpp
@@ -15,7 +16,8 @@ add_executable(WorldClockTests
     ../bench/BenchStats.cpp
 )
 
-target_link_libraries(WorldClockTests PRIVATE worldclock_core)
+# d2d1: test_dibwicbitmap drives a real Direct2D render target over the wrapper.
+target_link_libraries(WorldClockTests PRIVATE worldclock_core d2d1)
 
 if (MSVC)
     target_compile_options(WorldClockTests PRIVATE /W4 /permissive- /utf-8 /EHsc)

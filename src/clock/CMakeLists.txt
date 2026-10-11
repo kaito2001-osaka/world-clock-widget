@@ -15,6 +15,7 @@ option(WORLDCLOCK_BUILD_BENCH "Build the render benchmark" OFF)
 add_library(worldclock_core STATIC
     Config.cpp
     ConfigWatch.cpp
+    DibWicBitmap.cpp
     TextFormat.cpp
     TimeEngine.cpp
     TimerCadence.cpp
