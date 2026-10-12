@@ -208,6 +208,10 @@ build_clock.cmd                        REM C++ gadget only
 dotnet build src\settings -c Release   REM settings app only
 ```
 
+The gadget links the CRT statically so that it runs without the VC++ redistributable.
+`build_all.cmd`, `make_installer.cmd` and `build_clock.cmd` check with `tools\check-static-crt.cmd`
+that the built gadget imports no dynamic CRT DLL (`VCRUNTIME140.dll` and the like), and fail if it does.
+
 ### Measuring (for developers)
 
 The gadget draws once a second, so comparing its process CPU time over a few minutes is noise.
@@ -307,7 +311,7 @@ src/clock/                  C++ gadget
   json.hpp                    minimal dependency-free JSON parser
   bench/                      render benchmark and golden buffers (run_bench.cmd)
 src/settings/               C# WPF settings app
-tools/                      developer scripts (resident footprint measurement)
+tools/                      developer scripts (resident footprint measurement, static CRT check)
 installer/                  Inno Setup script
 icons/                      application icons
 ```
