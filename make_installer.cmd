@@ -23,6 +23,8 @@ if exist "%STAGE%" rmdir /s /q "%STAGE%"
 
 echo === [3/4] Staging gadget exe ===
 copy /y "%ROOT%build\clock\WorldClockGadget.exe" "%STAGE%\" >nul || exit /b 1
+REM Check the exe that goes into the installer, not the one in build\clock.
+call "%ROOT%tools\check-static-crt.cmd" "%STAGE%\WorldClockGadget.exe" || exit /b 1
 
 echo === [4/4] Compiling installer ===
 "%ISCC%" "%ROOT%installer\WorldClockGadget.iss" || exit /b 1

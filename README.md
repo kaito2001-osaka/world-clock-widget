@@ -206,6 +206,11 @@ build_clock.cmd                        REM C++ ガジェット本体のみ
 dotnet build src\settings -c Release   REM 設定アプリのみ
 ```
 
+ガジェットは、VC++ 再頒布可能パッケージのない環境でも動くよう CRT を静的リンクしています。
+`build_all.cmd`・`make_installer.cmd`・`build_clock.cmd` は、ビルドしたガジェットが動的 CRT
+（`VCRUNTIME140.dll` など）を import していないことを `tools\check-static-crt.cmd` で確かめ、
+import していればエラーで止まります。
+
 ### 計測（開発者向け）
 
 ガジェットは 1 秒に 1 回しか描画しないため、数分間のプロセス CPU 時間を比べても差はノイズに
@@ -303,7 +308,7 @@ src/clock/                  C++ ガジェット本体
   json.hpp                    依存なしの最小 JSON パーサ
   bench/                      描画ベンチマークとゴールデンバッファ（run_bench.cmd）
 src/settings/               C# WPF 設定アプリ
-tools/                      開発用スクリプト（常駐時のフットプリント計測）
+tools/                      開発用スクリプト（常駐時のフットプリント計測、静的 CRT の確認）
 installer/                  Inno Setup スクリプト
 icons/                      アプリアイコン
 ```

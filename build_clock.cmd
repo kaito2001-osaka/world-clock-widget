@@ -15,6 +15,9 @@ if errorlevel 1 ( echo configure failed & exit /b 1 )
 "%CMAKE%" --build "%~dp0build\clock" --config Release
 if errorlevel 1 ( echo build failed & exit /b 1 )
 
+call "%~dp0tools\check-static-crt.cmd" "%~dp0build\clock\WorldClockGadget.exe"
+if errorlevel 1 ( echo static CRT check failed & exit /b 1 )
+
 echo.
 echo BUILD OK: %~dp0build\clock\WorldClockGadget.exe
 endlocal

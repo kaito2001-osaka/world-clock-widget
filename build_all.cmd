@@ -13,6 +13,7 @@ call "%VC%" >nul || ( echo vcvars failed & exit /b 1 )
 "%CMAKE%" -S "%ROOT%src\clock" -B "%ROOT%build\clock" -G Ninja ^
   -DCMAKE_MAKE_PROGRAM="%NINJA%" -DCMAKE_BUILD_TYPE=Release || exit /b 1
 "%CMAKE%" --build "%ROOT%build\clock" --config Release || exit /b 1
+call "%ROOT%tools\check-static-crt.cmd" "%ROOT%build\clock\WorldClockGadget.exe" || exit /b 1
 
 echo === [2/3] Publishing C# settings app ===
 dotnet publish "%ROOT%src\settings\WorldClockSettings.csproj" -c Release ^
