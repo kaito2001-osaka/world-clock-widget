@@ -4,6 +4,7 @@
 #include "TimeEngine.hpp"
 
 #include <d2d1helper.h>
+#include <array>
 #include <string>
 #include <vector>
 #include <cmath>
@@ -60,14 +61,30 @@ D2D1_SIZE_F Measure(IDWriteFactory* dw, IDWriteTextFormat* fmt, const std::wstri
     return LayoutSize(layout.Get());
 }
 
+// Unit vectors to the twelve hour marks, clockwise from 12 o'clock. The same
+// on every face and every frame, so computed once.
+struct TickDir { float s, c; };
+const std::array<TickDir, 12>& TickDirections() {
+    static const std::array<TickDir, 12> dirs = [] {
+        std::array<TickDir, 12> d{};
+        for (int t = 0; t < 12; ++t) {
+            float a = float(t) * 3.14159265f / 6.f;
+            d[t] = { std::sin(a), std::cos(a) };
+        }
+        return d;
+    }();
+    return dirs;
+}
+
 } // namespace
 
 float Renderer::Sc(float logical) const {
     return logical * (dpi_ / 96.0f) * (float)cfg_.scale();
 }
 
-bool Renderer::Init(HWND hwnd) {
+bool Renderer::Init(HWND hwnd, const Config& cfg) {
     hwnd_ = hwnd;
+    cfg_ = cfg;
     dpi_ = GetDpiForWindow(hwnd);
     if (dpi_ == 0) dpi_ = 96;
 
@@ -172,11 +189,11 @@ void Renderer::RecomputeWorstCaseSizes() {
 // for analog). Heights/widths are in DIPs. Independent of the current time --
 // that is what keeps the panel from resizing as the clock ticks over.
 D2D1_SIZE_F Renderer::MeasureBlock(size_t index) const {
-    const float lineGap = Sc(2.f);
+    const float lineGap = m_.lineGap;
     const D2D1_SIZE_F ml = visuals_[index].labelSize;
 
     if (cfg_.displayMode == DisplayMode::Analog) {
-        const float faceD = Sc(80.f);
+        const float faceD = m_.faceD;
         float w = faceD, h = faceD;
         if (cfg_.showDate) {
             w = (std::max)(w, worstDate_.width); h += lineGap + worstDate_.height;
@@ -199,8 +216,18 @@ float Renderer::BlockWidth(size_t index) const {
 
 void Renderer::RecomputeLayout() {
     if (!dwFactory_) return;
-    const float pad = Sc(14.f);
-    const float cityGap = Sc(12.f);
+    m_.pad        = Sc(14.f);
+    m_.lineGap    = Sc(2.f);
+    m_.cityGap    = Sc(12.f);
+    m_.corner     = Sc(10.f);
+    m_.faceD      = Sc(80.f);
+    m_.tickStroke = Sc(1.5f);
+    m_.hub        = Sc(2.5f);
+    m_.hourHand   = Sc(3.0f);
+    m_.minuteHand = Sc(2.0f);
+    m_.secondHand = Sc(1.0f);
+    const float pad = m_.pad;
+    const float cityGap = m_.cityGap;
 
     // Label metrics feed MeasureBlock, so they have to exist before it runs.
     // Labels only change on a config reload, so this is the only place the
@@ -214,6 +241,9 @@ void Renderer::RecomputeLayout() {
 
     sizes_.assign(n, D2D1_SIZE_F{ 0.f, 0.f });
     lts_.assign(n, LocalTimeFields{});
+    clocks_.clear();
+    clocks_.reserve(n);
+    for (const CityEntry& c : cfg_.cities) clocks_.emplace_back(c.tz);
     maxW_ = 0.f;
 
     if (n == 0) {
@@ -262,7 +292,6 @@ void Renderer::RebuildVisuals() {
 
         // Force the date layout to be rebuilt against the new width/alignment.
         v.dateLayout.Reset();
-        v.dateText.clear();
     }
 }
 
@@ -351,22 +380,23 @@ bool Renderer::EnsureSurface(int w, int h) {
 }
 
 // Resolve each city's local time, and rebuild only the text that changed.
+// Nothing here allocates unless the day changed or an offset period ended.
 void Renderer::UpdateFrame(system_clock::time_point now) {
     const bool analog = cfg_.displayMode == DisplayMode::Analog;
     const DWRITE_TEXT_ALIGNMENT align =
         analog ? DWRITE_TEXT_ALIGNMENT_CENTER : DWRITE_TEXT_ALIGNMENT_LEADING;
 
     for (size_t i = 0; i < cfg_.cities.size(); ++i) {
-        lts_[i] = ComputeLocal(cfg_.cities[i].tz, now);
+        lts_[i] = clocks_[i].At(now);
         if (!cfg_.showDate) continue;
 
         CityVisual& v = visuals_[i];
-        std::wstring text = FormatDatePattern(lts_[i], dateFormatW_);
-        if (v.dateLayout && text == v.dateText) continue;   // same day, reuse
+        if (v.dateLayout && SameDate(lts_[i], v.dateFields)) continue;   // same day, reuse
 
-        v.dateText = std::move(text);
+        v.dateFields = lts_[i];
+        const std::wstring text = FormatDatePattern(lts_[i], dateFormatW_);
         v.dateLayout.Reset();
-        dwFactory_->CreateTextLayout(v.dateText.c_str(), (UINT32)v.dateText.size(),
+        dwFactory_->CreateTextLayout(text.c_str(), (UINT32)text.size(),
                                      fmtDate_.Get(), BlockWidth(i), worstDate_.height,
                                      &v.dateLayout);
         if (v.dateLayout) v.dateLayout->SetTextAlignment(align);
@@ -393,7 +423,7 @@ void Renderer::Render(system_clock::time_point now) {
     rt_->Clear(D2D1::ColorF(0, 0.f)); // fully transparent
 
     D2D1_RECT_F panel = D2D1::RectF(0.f, 0.f, float(w), float(h));
-    float radius = Sc(10.f);
+    float radius = m_.corner;
     rt_->FillRoundedRectangle(D2D1::RoundedRect(panel, radius, radius), brBg_.Get());
 
     if (cfg_.displayMode == DisplayMode::Analog)
@@ -412,6 +442,9 @@ void Renderer::Render(system_clock::time_point now) {
 
     // Present via UpdateLayeredWindow: keep current position, set size, and
     // apply overall opacity through the constant source alpha.
+    // Passing null for the screen DC and the position also keeps the window in
+    // place and skips these three calls, but WorldClockBench measured it as a
+    // net loss: the present got faster and the next analog draw slower by more.
     HDC screen = GetDC(nullptr);
     RECT wr{}; GetWindowRect(hwnd_, &wr);
     POINT dst = { wr.left, wr.top };
@@ -427,9 +460,9 @@ void Renderer::Render(system_clock::time_point now) {
 }
 
 void Renderer::DrawDigital(ID2D1RenderTarget* rt) {
-    const float pad = Sc(14.f);
-    const float lineGap = Sc(2.f);
-    const float cityGap = Sc(12.f);
+    const float pad = m_.pad;
+    const float lineGap = m_.lineGap;
+    const float cityGap = m_.cityGap;
     const bool horiz = cfg_.layout == LayoutDir::Horizontal;
 
     float x = pad, y = pad;
@@ -444,9 +477,11 @@ void Renderer::DrawDigital(ID2D1RenderTarget* rt) {
         yy += v.labelSize.height + lineGap;
 
         // The clock line changes every frame by construction, so there is
-        // nothing to cache for it.
-        std::wstring timeStr = FormatTime(lts_[i], cfg_);
-        rt->DrawTextW(timeStr.c_str(), (UINT32)timeStr.size(), fmtTime_.Get(),
+        // nothing to cache for it. A stack buffer, because "12:59:59" is
+        // already too long for std::wstring to hold without allocating.
+        wchar_t timeStr[kFormatTimeCapacity];
+        const size_t timeLen = FormatTimeTo(lts_[i], cfg_, timeStr, kFormatTimeCapacity);
+        rt->DrawTextW(timeStr, (UINT32)timeLen, fmtTime_.Get(),
                       D2D1::RectF(left, yy, left + blockW, yy + worstTime_.height),
                       brTime_.Get());
         yy += worstTime_.height;
@@ -462,10 +497,10 @@ void Renderer::DrawDigital(ID2D1RenderTarget* rt) {
 }
 
 void Renderer::DrawAnalog(ID2D1RenderTarget* rt) {
-    const float pad = Sc(14.f);
-    const float lineGap = Sc(2.f);
-    const float cityGap = Sc(12.f);
-    const float faceD = Sc(80.f);
+    const float pad = m_.pad;
+    const float lineGap = m_.lineGap;
+    const float cityGap = m_.cityGap;
+    const float faceD = m_.faceD;
     const float r = faceD / 2.f;
     const bool horiz = cfg_.layout == LayoutDir::Horizontal;
 
@@ -487,14 +522,12 @@ void Renderer::DrawAnalog(ID2D1RenderTarget* rt) {
 
         D2D1_ELLIPSE e = D2D1::Ellipse(D2D1::Point2F(cx, ccy), r, r);
         rt->FillEllipse(e, face);
-        rt->DrawEllipse(e, tick, Sc(1.5f));
+        rt->DrawEllipse(e, tick, m_.tickStroke);
 
-        for (int t = 0; t < 12; ++t) {
-            float a = float(t) * 3.14159265f / 6.f;
-            float s = std::sin(a), c = std::cos(a);
-            rt->DrawLine(D2D1::Point2F(cx + s * (r * 0.82f), ccy - c * (r * 0.82f)),
-                         D2D1::Point2F(cx + s * (r * 0.95f), ccy - c * (r * 0.95f)),
-                         tick, Sc(1.5f));
+        for (const TickDir& d : TickDirections()) {
+            rt->DrawLine(D2D1::Point2F(cx + d.s * (r * 0.82f), ccy - d.c * (r * 0.82f)),
+                         D2D1::Point2F(cx + d.s * (r * 0.95f), ccy - d.c * (r * 0.95f)),
+                         tick, m_.tickStroke);
         }
 
         if (lt.valid) {
@@ -507,11 +540,11 @@ void Renderer::DrawAnalog(ID2D1RenderTarget* rt) {
                              D2D1::Point2F(cx + std::sin(a) * len, ccy - std::cos(a) * len),
                              b, width);
             };
-            hand(hr / 12.f,  r * 0.5f,  Sc(3.0f), hands);
-            hand(min / 60.f, r * 0.75f, Sc(2.0f), hands);
-            if (cfg_.showSeconds) hand(sec / 60.f, r * 0.85f, Sc(1.0f), brLabel_.Get());
+            hand(hr / 12.f,  r * 0.5f,  m_.hourHand, hands);
+            hand(min / 60.f, r * 0.75f, m_.minuteHand, hands);
+            if (cfg_.showSeconds) hand(sec / 60.f, r * 0.85f, m_.secondHand, brLabel_.Get());
         }
-        rt->FillEllipse(D2D1::Ellipse(D2D1::Point2F(cx, ccy), Sc(2.5f), Sc(2.5f)), hands);
+        rt->FillEllipse(D2D1::Ellipse(D2D1::Point2F(cx, ccy), m_.hub, m_.hub), hands);
 
         // Date (below the face), then city label (below the date). Both are
         // centred by their own layouts.

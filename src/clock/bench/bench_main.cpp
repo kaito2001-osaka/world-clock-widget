@@ -209,8 +209,7 @@ HWND CreateHiddenLayeredWindow() {
 
 // A fresh Renderer per case, so no case's output depends on the one before.
 bool Setup(Renderer& r, HWND hwnd, const Case& c) {
-    if (!r.Init(hwnd)) return false;
-    r.SetConfig(MakeConfig(c));
+    if (!r.Init(hwnd, MakeConfig(c))) return false;
     r.OnDpiChanged(c.dpi);
     return true;
 }

@@ -34,43 +34,112 @@ bool ResolveRect(const WICRect* rc, UINT w, UINT h, WICRect& out) {
     return true;
 }
 
-class DibWicBitmapLock
-    : public RuntimeClass<RuntimeClassFlags<ClassicCom>, IWICBitmapLock> {
-public:
-    // Holds a reference to its bitmap, as WIC's own locks do, so the bitmap
-    // cannot go away while a lock still points into it.
-    DibWicBitmapLock(IWICBitmap* owner, BYTE* data, UINT stride, UINT w, UINT h)
-        : owner_(owner), data_(data), stride_(stride), w_(w), h_(h) {}
+// What a lock hands out: a rect of the bitmap's memory. The IWICBitmapLock
+// queries, shared by both kinds of lock below.
+struct LockView {
+    BYTE* data = nullptr;
+    UINT  stride = 0, w = 0, h = 0;
 
-    STDMETHODIMP GetSize(UINT* w, UINT* h) override {
-        if (!w || !h) return E_INVALIDARG;
-        *w = w_; *h = h_;
+    HRESULT GetSize(UINT* pw, UINT* ph) const {
+        if (!pw || !ph) return E_INVALIDARG;
+        *pw = w; *ph = h;
         return S_OK;
     }
-    STDMETHODIMP GetStride(UINT* stride) override {
-        if (!stride) return E_INVALIDARG;
-        *stride = stride_;
+    HRESULT GetStride(UINT* ps) const {
+        if (!ps) return E_INVALIDARG;
+        *ps = stride;
         return S_OK;
     }
     // The span runs from the first pixel of the rect to the last, not to the end
     // of the last full row: bytes past the rect's right edge on its last row may
     // belong to nobody (or, with a sub-rect, to pixels the caller did not lock).
-    STDMETHODIMP GetDataPointer(UINT* size, WICInProcPointer* data) override {
-        if (!size || !data) return E_INVALIDARG;
-        *size = stride_ * (h_ - 1) + w_ * kBytesPerPixel;
-        *data = data_;
+    HRESULT GetDataPointer(UINT* size, WICInProcPointer* pd) const {
+        if (!size || !pd) return E_INVALIDARG;
+        *size = stride * (h - 1) + w * kBytesPerPixel;
+        *pd = data;
         return S_OK;
     }
-    STDMETHODIMP GetPixelFormat(WICPixelFormatGUID* fmt) override {
+    static HRESULT GetPixelFormat(WICPixelFormatGUID* fmt) {
         if (!fmt) return E_INVALIDARG;
         *fmt = GUID_WICPixelFormat32bppPBGRA;
         return S_OK;
     }
+};
+
+// A lock with its own heap object, for when the embedded one (below) is
+// already handed out.
+class DibWicBitmapLock
+    : public RuntimeClass<RuntimeClassFlags<ClassicCom>, IWICBitmapLock> {
+public:
+    // Holds a reference to its bitmap, as WIC's own locks do, so the bitmap
+    // cannot go away while a lock still points into it.
+    DibWicBitmapLock(IWICBitmap* owner, const LockView& view)
+        : owner_(owner), view_(view) {}
+
+    STDMETHODIMP GetSize(UINT* w, UINT* h) override { return view_.GetSize(w, h); }
+    STDMETHODIMP GetStride(UINT* stride) override { return view_.GetStride(stride); }
+    STDMETHODIMP GetDataPointer(UINT* size, WICInProcPointer* data) override {
+        return view_.GetDataPointer(size, data);
+    }
+    STDMETHODIMP GetPixelFormat(WICPixelFormatGUID* fmt) override {
+        return LockView::GetPixelFormat(fmt);
+    }
 
 private:
     ComPtr<IWICBitmap> owner_;
-    BYTE* data_;
-    UINT  stride_, w_, h_;
+    LockView view_;
+};
+
+// The lock Direct2D takes at every EndDraw, kept inside the bitmap so that
+// taking it does not allocate. Every reference to it is also a reference to
+// the bitmap -- so it keeps the bitmap alive just as a heap lock does, and the
+// bitmap (with this inside it) cannot be freed while the lock is out. Its own
+// count says only whether it is handed out. Not thread-safe, like the
+// renderer's single-threaded factory that drives it.
+class EmbeddedLock final : public IWICBitmapLock {
+public:
+    explicit EmbeddedLock(IWICBitmap* owner) : owner_(owner) {}
+
+    bool InUse() const { return refs_ != 0; }
+    // Only while not in use: whoever holds it is reading view_.
+    void Aim(const LockView& view) { view_ = view; }
+
+    STDMETHODIMP QueryInterface(REFIID iid, void** out) override {
+        if (!out) return E_POINTER;
+        if (iid == __uuidof(IUnknown) || iid == __uuidof(IWICBitmapLock)) {
+            *out = static_cast<IWICBitmapLock*>(this);
+            AddRef();
+            return S_OK;
+        }
+        *out = nullptr;
+        return E_NOINTERFACE;
+    }
+    STDMETHODIMP_(ULONG) AddRef() override {
+        owner_->AddRef();
+        return ++refs_;
+    }
+    STDMETHODIMP_(ULONG) Release() override {
+        // The owner's release can free the owner, and this with it, so
+        // nothing of this object is touched after it.
+        IWICBitmap* owner = owner_;
+        const ULONG left = --refs_;
+        owner->Release();
+        return left;
+    }
+
+    STDMETHODIMP GetSize(UINT* w, UINT* h) override { return view_.GetSize(w, h); }
+    STDMETHODIMP GetStride(UINT* stride) override { return view_.GetStride(stride); }
+    STDMETHODIMP GetDataPointer(UINT* size, WICInProcPointer* data) override {
+        return view_.GetDataPointer(size, data);
+    }
+    STDMETHODIMP GetPixelFormat(WICPixelFormatGUID* fmt) override {
+        return LockView::GetPixelFormat(fmt);
+    }
+
+private:
+    IWICBitmap* owner_;   // not a ComPtr: the owner contains this
+    ULONG       refs_ = 0;
+    LockView    view_;
 };
 
 class DibWicBitmap
@@ -78,7 +147,7 @@ class DibWicBitmap
                           ChainInterfaces<IWICBitmap, IWICBitmapSource>> {
 public:
     DibWicBitmap(BYTE* bits, UINT w, UINT h, UINT stride)
-        : bits_(bits), w_(w), h_(h), stride_(stride) {}
+        : bits_(bits), w_(w), h_(h), stride_(stride), lock_(this) {}
 
     // ---- IWICBitmapSource ----
     STDMETHODIMP GetSize(UINT* w, UINT* h) override {
@@ -128,9 +197,17 @@ public:
         if (!(flags & (WICBitmapLockRead | WICBitmapLockWrite))) return E_INVALIDARG;
         WICRect r;
         if (!ResolveRect(rc, w_, h_, r)) return E_INVALIDARG;
+        const LockView view{ PixelAt(r.X, r.Y), stride_, (UINT)r.Width, (UINT)r.Height };
 
-        ComPtr<DibWicBitmapLock> lock =
-            Make<DibWicBitmapLock>(this, PixelAt(r.X, r.Y), stride_, (UINT)r.Width, (UINT)r.Height);
+        // Every frame locks once, so reusing one lock is what keeps a
+        // steady-state frame from allocating.
+        if (!lock_.InUse()) {
+            lock_.Aim(view);
+            lock_.AddRef();
+            *out = &lock_;
+            return S_OK;
+        }
+        ComPtr<DibWicBitmapLock> lock = Make<DibWicBitmapLock>(this, view);
         if (!lock) return E_OUTOFMEMORY;
         *out = lock.Detach();
         return S_OK;
@@ -149,6 +226,7 @@ private:
 
     BYTE* bits_;
     UINT  w_, h_, stride_;
+    EmbeddedLock lock_;
 };
 
 } // namespace

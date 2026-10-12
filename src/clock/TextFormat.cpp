@@ -16,20 +16,31 @@ const wchar_t* kMonthLong[13]   = { L"", L"January", L"February", L"March", L"Ap
 
 } // namespace
 
-std::wstring FormatTime(const LocalTimeFields& f, const Config& cfg) {
-    if (!f.valid) return L"--:--";
-    int h = f.hour;
-    const wchar_t* ampm = L"";
-    if (cfg.hourFormat == 12) {
-        ampm = (h < 12) ? L" AM" : L" PM";
-        h = h % 12; if (h == 0) h = 12;
+size_t FormatTimeTo(const LocalTimeFields& f, const Config& cfg, wchar_t* buf, size_t cap) {
+    if (cap == 0) return 0;
+    int n;
+    if (!f.valid) {
+        n = swprintf(buf, cap, L"--:--");
+    } else {
+        int h = f.hour;
+        const wchar_t* ampm = L"";
+        if (cfg.hourFormat == 12) {
+            ampm = (h < 12) ? L" AM" : L" PM";
+            h = h % 12; if (h == 0) h = 12;
+        }
+        if (cfg.showSeconds)
+            n = swprintf(buf, cap, L"%d:%02d:%02d%s", h, f.minute, f.second, ampm);
+        else
+            n = swprintf(buf, cap, L"%d:%02d%s", h, f.minute, ampm);
     }
-    wchar_t buf[32];
-    if (cfg.showSeconds)
-        swprintf(buf, 32, L"%d:%02d:%02d%s", h, f.minute, f.second, ampm);
-    else
-        swprintf(buf, 32, L"%d:%02d%s", h, f.minute, ampm);
-    return buf;
+    if (n < 0) { buf[0] = L'\0'; return 0; }   // did not fit
+    return (size_t)n;
+}
+
+std::wstring FormatTime(const LocalTimeFields& f, const Config& cfg) {
+    wchar_t buf[kFormatTimeCapacity];
+    const size_t n = FormatTimeTo(f, cfg, buf, kFormatTimeCapacity);
+    return std::wstring(buf, n);
 }
 
 std::wstring FormatDatePattern(const LocalTimeFields& f, const std::wstring& pat) {
@@ -65,6 +76,13 @@ std::wstring FormatDatePattern(const LocalTimeFields& f, const std::wstring& pat
         }
     }
     return out;
+}
+
+bool SameDate(const LocalTimeFields& a, const LocalTimeFields& b) {
+    if (a.valid != b.valid) return false;
+    if (!a.valid) return true;   // both format to the empty string
+    return a.year == b.year && a.month == b.month && a.day == b.day
+        && a.weekday == b.weekday;
 }
 
 std::wstring WidenDigits(std::wstring s, wchar_t wide) {

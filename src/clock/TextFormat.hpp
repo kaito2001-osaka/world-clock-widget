@@ -12,6 +12,13 @@
 // Returns L"--:--" when the fields are invalid.
 std::wstring FormatTime(const LocalTimeFields& f, const Config& cfg);
 
+// FormatTime into a caller's buffer, for the per-frame path: "12:59:59 PM" is
+// past std::wstring's small-string capacity, so the string version allocates.
+// Writes a terminated string and returns its length (0, with buf[0] = 0, if
+// it does not fit). kFormatTimeCapacity always fits.
+constexpr size_t kFormatTimeCapacity = 32;
+size_t FormatTimeTo(const LocalTimeFields& f, const Config& cfg, wchar_t* buf, size_t cap);
+
 // Format a date by a token pattern. Tokens (run-length sensitive, .NET-like):
 //   yyyy/yy            year (4 / 2 digit)
 //   MMMM/MMM/MM/M      month long name / short name / 2-digit / number
@@ -20,6 +27,11 @@ std::wstring FormatTime(const LocalTimeFields& f, const Config& cfg);
 // Any other character is emitted literally (so "年", "月", "/", "-", spaces
 // pass through).
 std::wstring FormatDatePattern(const LocalTimeFields& f, const std::wstring& pat);
+
+// True when FormatDatePattern would give `a` and `b` the same string for any
+// pattern: the same validity and, if valid, the same calendar day. Lets a
+// caller skip formatting (and allocating) until the day actually changes.
+bool SameDate(const LocalTimeFields& a, const LocalTimeFields& b);
 
 // Substitute every digit with `wide` so a measurement reflects the worst-case
 // width for that pattern. Digits in Segoe UI do not share an advance width, so
