@@ -148,14 +148,21 @@ bool Renderer::CreateTextFormats() {
     if (!make(Sc(11.f), DWRITE_FONT_WEIGHT_NORMAL,    fmtDate_))  return false;
 
     // Find the widest digit once per format change (same family throughout, so
-    // one probe covers every text style we draw).
-    widestDigit_ = L'0';
+    // one probe covers every text style we draw). Compared on the raw advance:
+    // Measure() rounds up to whole pixels, which hides the fraction of a pixel
+    // that makes '4' the widest.
     {
-        float best = -1.f;
-        for (wchar_t d = L'0'; d <= L'9'; ++d) {
-            auto m = Measure(dwFactory_.Get(), fmtTime_.Get(), std::wstring(1, d));
-            if (m.width > best) { best = m.width; widestDigit_ = d; }
+        float advances[10] = {};
+        for (int d = 0; d < 10; ++d) {
+            const wchar_t ch = wchar_t(L'0' + d);
+            ComPtr<IDWriteTextLayout> layout;
+            DWRITE_TEXT_METRICS m{};
+            if (SUCCEEDED(dwFactory_->CreateTextLayout(&ch, 1, fmtTime_.Get(), 4000.f, 4000.f,
+                                                       &layout)))
+                layout->GetMetrics(&m);
+            advances[d] = m.widthIncludingTrailingWhitespace;
         }
+        widestDigit_ = WidestDigit(advances);
     }
 
     RecomputeWorstCaseSizes();

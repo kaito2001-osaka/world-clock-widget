@@ -122,6 +122,29 @@ TEST(widen_digits_preserves_length) {
     CHECK_EQ(WidenDigits(src, L'8').size(), src.size());
 }
 
+// ---- WidestDigit ----------------------------------------------------------
+
+TEST(widest_digit_sees_a_fraction_of_a_pixel) {
+    // Segoe UI Light at 26 px (medium, 96 dpi) as DirectWrite measures it.
+    // Rounded up, '0' and '4' are both 14 px; '4' is still wider, and sizing
+    // from '0' let "22:29:48" overflow its box and wrap the 8 onto the date.
+    const float segoeLight26[10] = { 13.394f, 9.268f, 13.394f, 13.394f, 13.800f,
+                                     13.394f, 13.394f, 12.975f, 13.394f, 13.394f };
+    CHECK_EQ(WidestDigit(segoeLight26), L'4');
+    const float tiny[10] = { 1.f, 1.f, 1.f, 1.f, 1.f, 1.f, 1.f, 1.f, 1.f, 1.0001f };
+    CHECK_EQ(WidestDigit(tiny), L'9');
+}
+
+TEST(widest_digit_first_wins_a_tie) {
+    const float equal[10] = { 5.f, 5.f, 5.f, 5.f, 5.f, 5.f, 5.f, 5.f, 5.f, 5.f };
+    CHECK_EQ(WidestDigit(equal), L'0');
+    const float twoWide[10] = { 1.f, 2.f, 3.f, 7.f, 2.f, 7.f, 1.f, 1.f, 1.f, 1.f };
+    CHECK_EQ(WidestDigit(twoWide), L'3');
+    // A failed measurement reads as zero and never wins over a real width.
+    const float oneFailed[10] = { 0.f, 4.f, 4.f, 4.f, 4.f, 4.f, 4.f, 4.f, 4.f, 4.f };
+    CHECK_EQ(WidestDigit(oneFailed), L'1');
+}
+
 // ---- worst-case sizing candidates -----------------------------------------
 // The invariant behind the panel-jitter fix: whatever the clock actually
 // shows, some candidate string is at least as long. Length is what the old
