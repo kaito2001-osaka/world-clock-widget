@@ -38,6 +38,13 @@ bool SameDate(const LocalTimeFields& a, const LocalTimeFields& b);
 // measuring the live string would resize the panel every second.
 std::wstring WidenDigits(std::wstring s, wchar_t wide);
 
+// The digit with the largest advance, given the advances of '0'..'9' in order;
+// the first one wins a tie. The advances must be the unrounded ones: in Segoe
+// UI Light '4' is under a pixel wider than the rest, so widths rounded up to
+// whole pixels tie and '0' would win, sizing the clock line too narrow for
+// any time with a 4 in it.
+wchar_t WidestDigit(const float (&advances)[10]);
+
 // ---- worst-case strings for sizing -----------------------------------------
 // The panel is sized from what a block *could* hold, not from what it holds
 // right now. Sizing from the live string makes the panel grow and shrink as

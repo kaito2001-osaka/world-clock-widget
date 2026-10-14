@@ -3,6 +3,7 @@
 //   WorldClockBench [--frames N]            per-phase timing table
 //   WorldClockBench --write-golden [--golden-dir DIR]
 //   WorldClockBench --check-golden [--golden-dir DIR]
+//   WorldClockBench --check-incremental [--golden-dir DIR]
 //
 // The gadget draws at 1 Hz, so its process CPU time over a few minutes is
 // noise. This drives the real Renderer against a hidden layered window with
@@ -13,6 +14,11 @@
 // fixed time and config. A screen capture cannot see alpha; these can. They
 // depend on the installed fonts and DirectWrite, so they are generated
 // locally from main and checked on a branch rather than committed.
+//
+// --check-incremental needs no goldens: it renders a timeline that crosses
+// midnight and noon both incrementally and with a full redraw on every frame,
+// and compares the two after each frame. On a mismatch it writes both frames,
+// in the golden format, to the golden directory.
 #include <windows.h>
 
 #include <atomic>
@@ -25,6 +31,7 @@
 #include <iterator>
 #include <new>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "BenchStats.hpp"
@@ -398,11 +405,95 @@ int RunGoldens(HWND hwnd, const std::filesystem::path& dir, bool write) {
     return failures ? 1 : 0;
 }
 
+// ---- incremental vs full redraw ----------------------------------------------
+
+// A timeline that keeps one renderer on incremental frames through the cases
+// where it must fall back to a full redraw, or must not need to.
+std::vector<system_clock::time_point> IncrementalTimeline() {
+    std::vector<system_clock::time_point> t;
+    auto run = [&](system_clock::time_point from, int frames) {
+        for (int i = 0; i < frames; ++i) t.push_back(from + seconds{ i });
+    };
+    const sys_days day = sys_days{ year{ 2026 } / January / 15 };
+    run(kStart, 30);                                         // steady state
+    run(day + hours{ 14 } + minutes{ 59 } + seconds{ 45 }, 30);   // Tokyo midnight: date line
+    run(day + hours{ 2 } + minutes{ 59 } + seconds{ 45 }, 30);    // Tokyo noon: AM/PM face
+    run(day + days{ 3 } + hours{ 2 } + minutes{ 59 } + seconds{ 58 }, 4);   // resume days later
+    run(day + days{ 3 } + hours{ 1 } + minutes{ 59 } + seconds{ 58 }, 4);   // clock set back
+    return t;
+}
+
+// Renders the timeline twice side by side, once incrementally and once with a
+// full redraw forced on every frame, and requires the presented DIBs to match
+// byte for byte after every frame.
+int RunIncrementalCheck(HWND hwnd, const std::filesystem::path& dumpDir) {
+    const std::vector<system_clock::time_point> timeline = IncrementalTimeline();
+    int failures = 0, matched = 0;
+    for (const Case& c : GoldenCases()) {
+        const std::string name = GoldenName(c);
+        Renderer inc, full;
+        if (!Setup(inc, hwnd, c) || !Setup(full, hwnd, c)) {
+            std::printf("FAIL  %s: renderer init failed\n", name.c_str());
+            ++failures;
+            continue;
+        }
+        bool ok = true;
+        for (size_t f = 0; f < timeline.size() && ok; ++f) {
+            inc.Render(timeline[f]);
+            full.BenchForceFullRedraw();
+            full.Render(timeline[f]);
+
+            const SIZE sz = inc.BenchSurface();
+            const SIZE fsz = full.BenchSurface();
+            if (!FrameComplete(inc.BenchLastFrame()) || !FrameComplete(full.BenchLastFrame())) {
+                std::printf("FAIL  %s: frame %zu returned early\n", name.c_str(), f);
+                ok = false;
+            } else if (sz.cx != fsz.cx || sz.cy != fsz.cy) {
+                std::printf("FAIL  %s: frame %zu size %ldx%ld, full redraw %ldx%ld\n",
+                            name.c_str(), f, sz.cx, sz.cy, fsz.cx, fsz.cy);
+                ok = false;
+            } else {
+                const size_t stride = (size_t)sz.cx * 4;
+                const BufferDiff d = CompareBuffers(
+                    static_cast<const uint8_t*>(full.BenchPixels()),
+                    static_cast<const uint8_t*>(inc.BenchPixels()), stride * (size_t)sz.cy);
+                if (d.differingBytes != 0) {
+                    std::printf("FAIL  %s: frame %zu, %zu byte(s) differ, first at pixel "
+                                "(%zu, %zu) channel %c\n",
+                                name.c_str(), f, d.differingBytes,
+                                (d.firstOffset % stride) / 4, d.firstOffset / stride,
+                                "BGRA"[d.firstOffset % 4]);
+                    // Both frames, in the golden format, for a closer look.
+                    std::error_code ec;
+                    std::filesystem::create_directories(dumpDir, ec);
+                    const GoldenHeader h{ (uint32_t)sz.cx, (uint32_t)sz.cy, (uint32_t)stride };
+                    for (auto [r, suffix] : { std::pair{ &inc, ".incremental.bgra" },
+                                              std::pair{ &full, ".full.bgra" } }) {
+                        std::vector<uint8_t> file = EncodeGoldenHeader(h);
+                        const uint8_t* px = static_cast<const uint8_t*>(r->BenchPixels());
+                        file.insert(file.end(), px, px + stride * (size_t)sz.cy);
+                        WriteFileBytes(dumpDir / (name + suffix), file);
+                    }
+                    ok = false;
+                }
+            }
+        }
+        if (ok) ++matched; else ++failures;
+        inc.Shutdown();
+        full.Shutdown();
+    }
+    std::printf("%d of %zu configuration(s) match a full redraw on all %zu frames\n",
+                matched, GoldenCases().size(), timeline.size());
+    if (failures) std::printf("%d FAILED\n", failures);
+    return failures ? 1 : 0;
+}
+
 int Usage() {
     std::fprintf(stderr,
         "usage: WorldClockBench [--frames N]\n"
         "       WorldClockBench --write-golden [--golden-dir DIR]\n"
-        "       WorldClockBench --check-golden [--golden-dir DIR]\n");
+        "       WorldClockBench --check-golden [--golden-dir DIR]\n"
+        "       WorldClockBench --check-incremental [--golden-dir DIR]\n");
     return 2;
 }
 
@@ -410,7 +501,7 @@ int Usage() {
 
 int wmain(int argc, wchar_t** argv) {
     int frames = 100;
-    enum class Mode { Timing, WriteGolden, CheckGolden } mode = Mode::Timing;
+    enum class Mode { Timing, WriteGolden, CheckGolden, CheckIncremental } mode = Mode::Timing;
     std::filesystem::path goldenDir = L"golden";
 
     for (int i = 1; i < argc; ++i) {
@@ -424,6 +515,8 @@ int wmain(int argc, wchar_t** argv) {
             mode = Mode::WriteGolden;
         } else if (a == L"--check-golden") {
             mode = Mode::CheckGolden;
+        } else if (a == L"--check-incremental") {
+            mode = Mode::CheckIncremental;
         } else {
             return Usage();
         }
@@ -444,6 +537,7 @@ int wmain(int argc, wchar_t** argv) {
         case Mode::Timing:      rc = RunTiming(hwnd, frames); break;
         case Mode::WriteGolden: rc = RunGoldens(hwnd, goldenDir, true); break;
         case Mode::CheckGolden: rc = RunGoldens(hwnd, goldenDir, false); break;
+        case Mode::CheckIncremental: rc = RunIncrementalCheck(hwnd, goldenDir); break;
     }
 
     DestroyWindow(hwnd);

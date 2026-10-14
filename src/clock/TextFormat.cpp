@@ -91,6 +91,13 @@ std::wstring WidenDigits(std::wstring s, wchar_t wide) {
     return s;
 }
 
+wchar_t WidestDigit(const float (&advances)[10]) {
+    int best = 0;
+    for (int d = 1; d < 10; ++d)
+        if (advances[d] > advances[best]) best = d;
+    return wchar_t(L'0' + best);
+}
+
 // ---- worst-case strings for sizing -----------------------------------------
 
 std::vector<std::wstring> MeasurementTimeCandidates(const Config& cfg) {

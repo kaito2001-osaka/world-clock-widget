@@ -241,6 +241,13 @@ git checkout <your-branch>
 run_bench.cmd --check-golden   REM exit code 1 and *.actual.bgra on a mismatch
 ```
 
+**Incremental redraw check** — a steady-state frame repaints only each city's clock line (or
+face). `run_bench.cmd --check-incremental` runs, for each golden configuration, one renderer
+drawing incrementally next to one forced to redraw everything, and compares the buffers byte for
+byte after every frame. The synthetic time crosses midnight and noon, jumps days ahead and goes
+back an hour. It needs no goldens. On a mismatch it exits with 1 and writes both frames to
+`build\golden` as `*.incremental.bgra` / `*.full.bgra`.
+
 **Resident footprint** — start the gadget, leave it for 5 minutes, then take 3 samples one minute
 apart and compare the medians.
 
