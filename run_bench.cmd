@@ -4,6 +4,7 @@ REM   run_bench.cmd                  per-phase timing table
 REM   run_bench.cmd --frames 300     more frames per row
 REM   run_bench.cmd --write-golden   save reference frames to build\golden
 REM   run_bench.cmd --check-golden   compare against them byte for byte
+REM   run_bench.cmd --check-incremental  incremental frames vs full redraws
 setlocal
 set VC=C:\Program Files\Microsoft Visual Studio\18\Community\VC\Auxiliary\Build\vcvars64.bat
 set CMAKE=C:\Program Files\Microsoft Visual Studio\18\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe

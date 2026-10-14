@@ -8,9 +8,11 @@
 // with a single pixel buffer and no per-frame copy.
 //
 // Frame cost: everything that depends only on the config, the DPI and the font
-// is computed when one of those changes, not per frame. A steady-state frame
-// resolves each city's local time, refreshes only the text whose string
-// actually changed, draws, and presents.
+// is computed when one of those changes, not per frame -- including where each
+// block sits (PanelLayout.hpp). A steady-state frame resolves each city's local
+// time, repaints only each city's clock line or face (the DIB still holds the
+// rest of the previous frame), and presents only that area. The whole panel is
+// redrawn after a config, DPI or surface change, and when a date line changes.
 #pragma once
 #include <windows.h>
 #include <d2d1.h>
@@ -22,6 +24,7 @@
 #include <vector>
 
 #include "Config.hpp"
+#include "PanelLayout.hpp"
 #include "TimeEngine.hpp"
 
 class Renderer {
@@ -53,6 +56,9 @@ public:
     // The DIB handed to UpdateLayeredWindow, i.e. exactly what is presented.
     const void* BenchPixels() const { return bits_; }
     SIZE BenchSurface() const { return surface_; }
+    // Make the next Render() redraw the whole panel, as the first frame does;
+    // the reference that incremental frames are compared against.
+    void BenchForceFullRedraw() { fullRedraw_ = true; }
 #endif
 
 private:
@@ -85,6 +91,10 @@ private:
         // The day dateLayout was formatted from. Comparing fields rather than
         // formatted strings keeps the steady-state frame allocation-free.
         LocalTimeFields dateFields;
+        // Whether the label's / date's ink reaches into the city's dirty rect,
+        // and so has to be redrawn inside it on a steady-state frame.
+        bool labelInDirty = true;
+        bool dateInDirty = true;
     };
     std::vector<CityVisual>      visuals_;
     std::vector<D2D1_SIZE_F>     sizes_;   // block size per city (config-level)
@@ -99,6 +109,12 @@ private:
         float hourHand = 0.f, minuteHand = 0.f, secondHand = 0.f;
     };
     Metrics m_;
+    std::vector<CityGeometry> geom_;       // block positions + dirty rects
+    RECT         dirtyUnion_ = { 0, 0, 0, 0 };   // what a steady frame presents
+    // The next frame repaints and presents the whole panel rather than only
+    // the dirty rects: nothing valid is in the DIB yet, or something outside
+    // the dirty rects (layout, a date line) has changed.
+    bool         fullRedraw_ = true;
     float        maxW_ = 0.f;              // widest block, for vertical layout
     std::wstring dateFormatW_;             // UTF-16 date pattern, converted once
 
@@ -126,7 +142,7 @@ private:
     void ReleaseDeviceResources();
     bool CreateTextFormats();       // false when a font could not be created
     void RecomputeWorstCaseSizes();
-    void RecomputeLayout();         // m_, block sizes, maxW_, desired_, clocks_
+    void RecomputeLayout();         // m_, block sizes, maxW_, desired_, clocks_, geom_
     void RebuildVisuals();          // labels + cached layouts, after a change
     void UpdateFrame(std::chrono::system_clock::time_point now);
     float Sc(float logical) const;  // logical px -> device px
@@ -140,9 +156,16 @@ private:
     // the shared widest in vertical (so left edges line up).
     float BlockWidth(size_t index) const;
 
-    void DrawDigital(ID2D1RenderTarget* rt);
+    // The rounded panel background, over a transparent clear. Both respect an
+    // axis-aligned clip, so this also restores the background under one city.
+    void DrawBackground(ID2D1RenderTarget* rt);
+    // One city: label, clock line or face, date. With `dirtyOnly`, the label
+    // and date are skipped unless their ink reaches the city's dirty rect --
+    // the caller has clipped to that rect, so they could not change a pixel.
+    void DrawCity(ID2D1RenderTarget* rt, size_t index, bool dirtyOnly);
+    void DrawCityDigital(ID2D1RenderTarget* rt, size_t index, bool dirtyOnly);
     // Analog faces switch between an AM (light) and PM (dark) palette per city
     // based on that city's local hour; the accent brush draws the name and the
     // second hand.
-    void DrawAnalog(ID2D1RenderTarget* rt);
+    void DrawCityAnalog(ID2D1RenderTarget* rt, size_t index, bool dirtyOnly);
 };
