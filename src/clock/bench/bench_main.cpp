@@ -10,7 +10,7 @@
 // synthetic time, as fast as it will go, and times each phase of a frame with
 // QPC through the WORLDCLOCK_BENCH hooks in Renderer.cpp.
 //
-// Goldens are the presented DIB (premultiplied BGRA, alpha included) for a
+// Goldens are the presented frame (premultiplied BGRA, alpha included) for a
 // fixed time and config. A screen capture cannot see alpha; these can. They
 // depend on the installed fonts and DirectWrite, so they are generated
 // locally from main and checked on a branch rather than committed.
@@ -235,10 +235,14 @@ void PrintHeader(int frames) {
     std::printf("WorldClockBench: %d frames per row after %d warm-up frames, 1 s apart from "
                 "2026-01-15 03:29:47 UTC\n", frames, kWarmupFrames);
     std::printf("Times in microseconds, median / p95. Allocations: operator new calls per frame, "
-                "median / max.\n\n");
-    std::printf("%-7s %-10s %-5s %-6s %3s %3s %11s %6s | %15s %15s %15s %15s %15s | %9s\n",
+                "median / max.\n");
+    std::printf("CPU: thousands of cycles per frame, mean over the row, in all threads / in this "
+                "one.\nThe first includes work the renderer hands to other threads; the times "
+                "do not show it.\n\n");
+    std::printf("%-7s %-10s %-5s %-6s %3s %3s %11s %6s | %15s %15s %15s %15s %15s | %9s | %15s\n",
                 "mode", "layout", "sec", "size", "dpi", "cty", "surface", "KiB",
-                "UpdateFrame", "Begin..EndDraw", "CopyPixels", "Present", "total", "allocs");
+                "UpdateFrame", "Begin..GetDC", "CopyPixels", "Present", "total", "allocs",
+                "kcycles");
 }
 
 int RunTiming(HWND hwnd, int frames) {
@@ -263,6 +267,12 @@ int RunTiming(HWND hwnd, int frames) {
         for (auto* v : { &ps.update, &ps.draw, &ps.copy, &ps.present, &ps.total, &ps.allocs })
             v->reserve((size_t)frames);   // so the bench's own bookkeeping is not counted
 
+        // Cycles rather than time, so that work spread over several threads
+        // counts in full.
+        ULONG64 procCycles0 = 0, threadCycles0 = 0;
+        QueryProcessCycleTime(GetCurrentProcess(), &procCycles0);
+        QueryThreadCycleTime(GetCurrentThread(), &threadCycles0);
+
         int incomplete = 0;
         for (int i = 0; i < frames; ++i, now += seconds{ 1 }) {
             const unsigned long long before = g_allocs.load();
@@ -279,6 +289,10 @@ int RunTiming(HWND hwnd, int frames) {
             ps.allocs.push_back((double)(after - before));
         }
 
+        ULONG64 procCycles1 = 0, threadCycles1 = 0;
+        QueryProcessCycleTime(GetCurrentProcess(), &procCycles1);
+        QueryThreadCycleTime(GetCurrentThread(), &threadCycles1);
+
         const SIZE sz = r.BenchSurface();
         char surface[24];
         std::snprintf(surface, sizeof surface, "%ldx%ld", sz.cx, sz.cy);
@@ -289,6 +303,8 @@ int RunTiming(HWND hwnd, int frames) {
         for (const std::vector<double>* v : { &ps.update, &ps.draw, &ps.copy, &ps.present, &ps.total })
             std::printf(" %7.1f/%7.1f", Percentile(*v, 0.5), Percentile(*v, 0.95));
         std::printf(" | %4.0f/%4.0f", Percentile(ps.allocs, 0.5), Percentile(ps.allocs, 1.0));
+        std::printf(" | %7.0f/%7.0f", (double)(procCycles1 - procCycles0) / frames / 1000.0,
+                    (double)(threadCycles1 - threadCycles0) / frames / 1000.0);
         if (incomplete) {
             std::printf("  %d frame(s) returned early", incomplete);
             ++failures;
@@ -424,7 +440,7 @@ std::vector<system_clock::time_point> IncrementalTimeline() {
 }
 
 // Renders the timeline twice side by side, once incrementally and once with a
-// full redraw forced on every frame, and requires the presented DIBs to match
+// full redraw forced on every frame, and requires the presented frames to match
 // byte for byte after every frame.
 int RunIncrementalCheck(HWND hwnd, const std::filesystem::path& dumpDir) {
     const std::vector<system_clock::time_point> timeline = IncrementalTimeline();

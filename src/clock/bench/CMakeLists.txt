@@ -11,7 +11,7 @@ add_executable(WorldClockBench
 target_compile_definitions(WorldClockBench PRIVATE WORLDCLOCK_BENCH)
 target_link_libraries(WorldClockBench PRIVATE
     worldclock_core
-    d2d1 dwrite windowscodecs user32 gdi32 ole32
+    d2d1 d3d11 dwrite user32 gdi32 ole32
 )
 
 if (MSVC)

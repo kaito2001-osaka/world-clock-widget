@@ -224,9 +224,12 @@ run_bench.cmd --frames 300     REM 1 行あたりのフレーム数を増やす
 `WorldClockBench` は、非表示の layered window に対して本物の Renderer を動かし、合成時刻を
 1 フレームごとに 1 秒進めて描画します。表の 1 行が 1 つの設定です（デジタル/アナログ × 縦/横 ×
 秒表示 × サイズ × DPI 96/144/192 × 4/8 都市）。各行には、描画面のサイズ、`UpdateFrame`・
-`BeginDraw`〜`EndDraw`・`CopyPixels`・提示それぞれの中央値と p95、1 フレームあたりの
-`operator new` の回数が出ます。計測用のフックはベンチ用にビルドした `Renderer.cpp`
-（`WORLDCLOCK_BENCH`）にしかなく、製品版の exe には影響しません。
+`BeginDraw`〜`GetDC`（ラスタライズを含む）・`CopyPixels`・提示（`UpdateLayeredWindow`・
+`ReleaseDC`・`EndDraw`）それぞれの中央値と p95、1 フレームあたりの `operator new` の回数、
+1 フレームあたりの CPU サイクル（全スレッドの合計 / 描画スレッドのみ）が出ます。時間は描画
+スレッドから見た所要時間なので、ほかのスレッドに任せた仕事は CPU サイクルの列にしか表れません。
+計測用のフックはベンチ用にビルドした `Renderer.cpp`（`WORLDCLOCK_BENCH`）にしかなく、製品版の
+exe には影響しません。
 
 **ゴールデンバッファ** — 描画系の変更では、出力が変わってはいけません。ベンチは、固定の時刻と
 設定で描いたバッファ（アルファを含む事前乗算 BGRA。`UpdateLayeredWindow` に渡すものそのもの）を
@@ -290,9 +293,13 @@ run_bench.cmd --check-golden   REM 不一致なら終了コード 1、*.actual.b
 
 ### 実装上のポイント
 
-- **半透明・丸角・滑らかな縁** — Direct2D を **WIC の事前乗算 BGRA ビットマップ**に描画し、
-  `UpdateLayeredWindow` で per-pixel alpha 合成。
-  （`ID2D1DCRenderTarget` + GDI DC 経由だと**アルファが失われて全透明になる**ため WIC を挟んでいます）
+- **半透明・丸角・滑らかな縁** — Direct2D で **GDI 互換の事前乗算 BGRA ビットマップ**に描画し、
+  その DC を `UpdateLayeredWindow` に渡して per-pixel alpha 合成。
+  （`ID2D1DCRenderTarget` だと**アルファが失われて全透明になる**ため使っていません）
+- **ソフトウェア描画のスレッド** — Direct3D 11 の WARP デバイスを自前で作り、
+  `D3D11_CREATE_DEVICE_SINGLETHREADED | D3D11_CREATE_DEVICE_PREVENT_INTERNAL_THREADING_OPTIMIZATIONS`
+  で WARP のワーカースレッドを止めています。1 秒に 1 回の描画のために常駐していた十本前後の
+  スレッドとそのメモリがなくなり、1 フレームの CPU サイクルも減ります
 - **DST の正確性** — 固定オフセットを持たず、IANA 識別子と C++20 `std::chrono::zoned_time` で
   **毎tick UTC から再計算**。これにより DST 切替も自動的に正しくなります
 - **レイアウトの安定性** — テキスト幅は「最も広い数字」で測定するため、

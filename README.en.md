@@ -225,9 +225,11 @@ run_bench.cmd --frames 300     REM more frames per row
 `WorldClockBench` drives the real renderer against a hidden layered window with synthetic time,
 1 s per frame. Each row is one configuration (digital/analog × vertical/horizontal × seconds ×
 size × DPI 96/144/192 × 4/8 cities). It prints the surface size, the median and p95 of
-`UpdateFrame`, `BeginDraw`…`EndDraw`, `CopyPixels` and the present, and the `operator new` calls
-per frame. The timing hooks exist only in the benchmark's own build of `Renderer.cpp`
-(`WORLDCLOCK_BENCH`); the product exe is unaffected.
+`UpdateFrame`, `BeginDraw`…`GetDC` (rasterization included), `CopyPixels` and the present
+(`UpdateLayeredWindow`, `ReleaseDC`, `EndDraw`), the `operator new` calls per frame, and the CPU
+cycles per frame (all threads / the render thread only). The times are as the render thread sees
+them, so work handed to other threads shows only in the cycles. The timing hooks exist only in
+the benchmark's own build of `Renderer.cpp` (`WORLDCLOCK_BENCH`); the product exe is unaffected.
 
 **Golden buffers** — rendering changes must not change the output. The benchmark saves the
 presented buffer (premultiplied BGRA, alpha included) for a fixed time and set of configurations,
@@ -291,10 +293,14 @@ the gadget watches the directory with `ReadDirectoryChangesW`.
 
 ### Implementation notes
 
-- **Translucency, rounded corners, clean edges** — Direct2D renders into a **premultiplied-BGRA WIC
-  bitmap**, which is then presented with `UpdateLayeredWindow` for true per-pixel alpha.
-  (Going through `ID2D1DCRenderTarget` + a GDI DC **drops the alpha channel**, which renders the
-  window fully transparent — hence the WIC hop.)
+- **Translucency, rounded corners, clean edges** — Direct2D renders into a **GDI-compatible
+  premultiplied-BGRA bitmap**, whose DC is handed to `UpdateLayeredWindow` for true per-pixel alpha.
+  (`ID2D1DCRenderTarget` **drops the alpha channel**, which renders the window fully transparent,
+  so it is not used.)
+- **Software rendering threads** — the renderer creates its own Direct3D 11 WARP device with
+  `D3D11_CREATE_DEVICE_SINGLETHREADED | D3D11_CREATE_DEVICE_PREVENT_INTERNAL_THREADING_OPTIMIZATIONS`,
+  which turns off WARP's worker threads. The ten or so threads that stayed resident to draw once a
+  second, and their memory, are gone, and a frame takes fewer CPU cycles.
 - **DST correctness** — no cached UTC offsets. Cities are stored as IANA identifiers and
   recomputed from UTC **every tick** with C++20 `std::chrono::zoned_time`, so DST transitions are
   handled automatically.
