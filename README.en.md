@@ -225,9 +225,11 @@ run_bench.cmd --frames 300     REM more frames per row
 `WorldClockBench` drives the real renderer against a hidden layered window with synthetic time,
 1 s per frame. Each row is one configuration (digital/analog × vertical/horizontal × seconds ×
 size × DPI 96/144/192 × 4/8 cities). It prints the surface size, the median and p95 of
-`UpdateFrame`, `BeginDraw`…`EndDraw`, `CopyPixels` and the present, and the `operator new` calls
-per frame. The timing hooks exist only in the benchmark's own build of `Renderer.cpp`
-(`WORLDCLOCK_BENCH`); the product exe is unaffected.
+`UpdateFrame`, `BeginDraw`…`EndDraw`, `CopyPixels` and the present, the `operator new` calls per
+frame, and the CPU cycles per frame (all threads / the render thread only). The times are as the
+render thread sees them, so work handed to other threads shows only in the cycles. The timing
+hooks exist only in the benchmark's own build of `Renderer.cpp` (`WORLDCLOCK_BENCH`); the product
+exe is unaffected.
 
 **Golden buffers** — rendering changes must not change the output. The benchmark saves the
 presented buffer (premultiplied BGRA, alpha included) for a fixed time and set of configurations,
