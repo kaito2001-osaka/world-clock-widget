@@ -186,6 +186,72 @@ TEST(config_load_file_reports_a_locked_file_as_unreadable) {
     CHECK(LoadConfigFile(f.path).status == ConfigLoadStatus::Ok);
 }
 
+// ---- writing (Win32 file I/O, #22) ----------------------------------------
+
+namespace {
+bool Exists(const std::wstring& path) {
+    return GetFileAttributesW(path.c_str()) != INVALID_FILE_ATTRIBUTES;
+}
+} // namespace
+
+TEST(config_write_file_round_trips_every_field) {
+    TempFile f("write_round_trip");
+    Config c = DefaultConfig();
+    c.cities = { { "Osaka \"Kansai\"", "Asia/Tokyo" }, { "\xE6\x9D\xB1\xE4\xBA\xAC", "Asia/Tokyo" } };
+    c.displayMode = DisplayMode::Analog;
+    c.layout = LayoutDir::Horizontal;
+    c.hourFormat = 12;
+    c.showDate = false;
+    c.dateFormat = "yyyy-MM-dd";
+    c.showSeconds = true;
+    c.size = SizeClass::Large;
+    c.opacity = 42;
+    c.alwaysOnTop = true;
+    c.lockPosition = true;
+    c.launchAtStartup = true;
+    c.theme = "light";
+
+    CHECK(WriteConfigFile(f.path, c));
+    ConfigLoadResult r = LoadConfigFile(f.path);
+    CHECK(r.status == ConfigLoadStatus::Ok);
+    CHECK(r.config == c);
+    CHECK(!Exists(f.path + L".gadget.tmp"));
+}
+
+TEST(config_write_file_replaces_a_longer_file_entirely) {
+    TempFile f("write_replace");
+    // Longer than what replaces it: a leftover tail would be a syntax error.
+    f.Write(std::string(4096, ' ') + R"({"opacity": 40})");
+    CHECK(WriteConfigFile(f.path, DefaultConfig()));
+    ConfigLoadResult r = LoadConfigFile(f.path);
+    CHECK(r.status == ConfigLoadStatus::Ok);
+    CHECK(r.config == DefaultConfig());
+    CHECK(!Exists(f.path + L".gadget.tmp"));
+}
+
+TEST(config_write_file_fails_cleanly_without_its_folder) {
+    TempFile f("write_no_folder");
+    const std::wstring path = f.path + L".missing\\config.json";
+    CHECK(!WriteConfigFile(path, DefaultConfig()));
+    CHECK(!Exists(path));
+    CHECK(!Exists(path + L".gadget.tmp"));
+}
+
+TEST(config_write_file_leaves_the_old_file_when_it_cannot_replace_it) {
+    TempFile f("write_locked");
+    f.Write(R"({"opacity": 40})");
+    // Held without FILE_SHARE_DELETE, so the replace keeps failing.
+    HANDLE lock = CreateFileW(f.path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr,
+                              OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    CHECK(lock != INVALID_HANDLE_VALUE);
+    const bool written = WriteConfigFile(f.path, DefaultConfig());
+    CloseHandle(lock);
+
+    CHECK(!written);
+    CHECK_EQ(LoadConfigFile(f.path).config.opacity, 40);
+    CHECK(!Exists(f.path + L".gadget.tmp"));
+}
+
 TEST(config_edit_is_refused_when_the_file_could_not_be_read) {
     Config displayed = DefaultConfig();
     displayed.cities = { { "Osaka", "Asia/Tokyo" } };

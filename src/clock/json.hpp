@@ -7,8 +7,8 @@
 #include <vector>
 #include <map>
 #include <memory>
-#include <sstream>
 #include <cstdint>
+#include <cstdio>
 #include <stdexcept>
 
 namespace json {
@@ -274,75 +274,83 @@ private:
 inline Value parse(const std::string& s) { return Parser(s).parse(); }
 
 // ---------- Serializer ----------
-inline void escape(std::ostream& o, const std::string& s) {
-    o << '"';
+// Appends to a std::string rather than writing to a stream: iostreams would
+// bring their locale machinery into the resident gadget for two small files.
+inline void escape(std::string& o, const std::string& s) {
+    o += '"';
     for (char c : s) {
         switch (c) {
-            case '"':  o << "\\\""; break;
-            case '\\': o << "\\\\"; break;
-            case '\n': o << "\\n";  break;
-            case '\r': o << "\\r";  break;
-            case '\t': o << "\\t";  break;
-            case '\b': o << "\\b";  break;
-            case '\f': o << "\\f";  break;
+            case '"':  o += "\\\""; break;
+            case '\\': o += "\\\\"; break;
+            case '\n': o += "\\n";  break;
+            case '\r': o += "\\r";  break;
+            case '\t': o += "\\t";  break;
+            case '\b': o += "\\b";  break;
+            case '\f': o += "\\f";  break;
             default:
                 // JSON forbids raw control characters, and System.Text.Json
                 // rejects the whole file over one. Compare as unsigned so
                 // UTF-8 lead and continuation bytes pass through.
                 if ((unsigned char)c < 0x20) {
                     static const char* kHex = "0123456789ABCDEF";
-                    o << "\\u00" << kHex[(unsigned char)c >> 4] << kHex[c & 0xF];
+                    o += "\\u00";
+                    o += kHex[(unsigned char)c >> 4];
+                    o += kHex[c & 0xF];
                 } else {
-                    o << c;
+                    o += c;
                 }
                 break;
         }
     }
-    o << '"';
+    o += '"';
 }
 
-inline void write(std::ostream& o, const Value& v, int indent = 0) {
+inline void write(std::string& o, const Value& v, int indent = 0) {
     std::string pad(indent * 2, ' ');
     std::string pad2((indent + 1) * 2, ' ');
     switch (v.type) {
-        case Type::Null:   o << "null"; break;
-        case Type::Bool:   o << (v.b ? "true" : "false"); break;
+        case Type::Null:   o += "null"; break;
+        case Type::Bool:   o += v.b ? "true" : "false"; break;
         case Type::Number: {
-            // Integer-valued numbers print without decimals.
-            if (v.num == (long long)v.num) o << (long long)v.num;
-            else o << v.num;
+            // Integer-valued numbers print without decimals. The rest use
+            // "%.6g", which is what the ostream this replaced printed through.
+            char buf[32];
+            int n = (v.num == (long long)v.num)
+                  ? std::snprintf(buf, sizeof(buf), "%lld", (long long)v.num)
+                  : std::snprintf(buf, sizeof(buf), "%.6g", v.num);
+            if (n > 0) o.append(buf, (size_t)n);
             break;
         }
         case Type::String: escape(o, v.str); break;
         case Type::Array:
-            if (v.arr.empty()) { o << "[]"; break; }
-            o << "[\n";
+            if (v.arr.empty()) { o += "[]"; break; }
+            o += "[\n";
             for (size_t k = 0; k < v.arr.size(); ++k) {
-                o << pad2; write(o, v.arr[k], indent + 1);
-                if (k + 1 < v.arr.size()) o << ",";
-                o << "\n";
+                o += pad2; write(o, v.arr[k], indent + 1);
+                if (k + 1 < v.arr.size()) o += ",";
+                o += "\n";
             }
-            o << pad << "]";
+            o += pad; o += "]";
             break;
         case Type::Object:
-            if (v.obj.empty()) { o << "{}"; break; }
-            o << "{\n";
+            if (v.obj.empty()) { o += "{}"; break; }
+            o += "{\n";
             for (size_t k = 0; k < v.obj.size(); ++k) {
-                o << pad2; escape(o, v.obj[k].first); o << ": ";
+                o += pad2; escape(o, v.obj[k].first); o += ": ";
                 write(o, v.obj[k].second, indent + 1);
-                if (k + 1 < v.obj.size()) o << ",";
-                o << "\n";
+                if (k + 1 < v.obj.size()) o += ",";
+                o += "\n";
             }
-            o << pad << "}";
+            o += pad; o += "}";
             break;
     }
 }
 
 inline std::string dump(const Value& v) {
-    std::ostringstream o;
+    std::string o;
     write(o, v, 0);
-    o << "\n";
-    return o.str();
+    o += "\n";
+    return o;
 }
 
 } // namespace json

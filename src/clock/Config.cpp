@@ -3,7 +3,6 @@
 
 #include <windows.h>
 #include <shlobj.h>
-#include <fstream>
 
 #pragma comment(lib, "shell32.lib")
 
@@ -74,10 +73,14 @@ bool WriteFileAtomic(const std::wstring& path, const std::string& data) {
     // "config.json.settings.tmp", so neither writer can clobber the other's.
     std::wstring tmp = path + L".gadget.tmp";
     {
-        std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
-        if (!f) return false;
-        f.write(data.data(), (std::streamsize)data.size());
-        if (!f) return false;
+        HANDLE h = CreateFileW(tmp.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS,
+                               FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (h == INVALID_HANDLE_VALUE) return false;
+        DWORD written = 0;
+        const bool ok = WriteFile(h, data.data(), (DWORD)data.size(), &written, nullptr) &&
+                        written == data.size();
+        CloseHandle(h);
+        if (!ok) { DeleteFileW(tmp.c_str()); return false; }
     }
     // Replace destination atomically.
     for (int attempt = 1;; ++attempt) {
@@ -209,7 +212,7 @@ static std::string SizeStr(SizeClass s) {
                  default: return "medium"; }
 }
 
-bool WriteConfigFull(const Config& c) {
+bool WriteConfigFile(const std::wstring& path, const Config& c) {
     json::Value root; root.type = json::Type::Object;
     json::Value arr;  arr.type  = json::Type::Array;
     for (auto& e : c.cities) {
@@ -231,8 +234,10 @@ bool WriteConfigFull(const Config& c) {
     root.set("lockPosition", c.lockPosition);
     root.set("launchAtStartup", c.launchAtStartup);
     root.set("theme", c.theme);
-    return WriteFileAtomic(ConfigPath(), json::dump(root));
+    return WriteFileAtomic(path, json::dump(root));
 }
+
+bool WriteConfigFull(const Config& c) { return WriteConfigFile(ConfigPath(), c); }
 
 bool WriteDefaultConfigIfMissing() {
     if (GetFileAttributesW(ConfigPath().c_str()) != INVALID_FILE_ATTRIBUTES)

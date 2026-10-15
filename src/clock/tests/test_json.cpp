@@ -165,6 +165,44 @@ TEST(json_dump_prints_integral_numbers_without_decimals) {
     CHECK(s.find("\"b\": 1.5") != std::string::npos);
 }
 
+// The serializer used to print through an ostream, whose defaults are "%lld"
+// for the integral case and "%.6g" otherwise. Pinned so files written by this
+// version read byte for byte like the ones written before.
+TEST(json_dump_formats_numbers_as_the_ostream_did) {
+    auto dumped = [](double d) { return json::dump(json::Value(d)); };
+    CHECK_EQ(dumped(0), std::string("0\n"));
+    CHECK_EQ(dumped(85), std::string("85\n"));
+    CHECK_EQ(dumped(-3), std::string("-3\n"));
+    CHECK_EQ(dumped(-0.0), std::string("0\n"));
+    CHECK_EQ(dumped(9007199254740992.0), std::string("9007199254740992\n"));
+    CHECK_EQ(dumped(-9007199254740992.0), std::string("-9007199254740992\n"));
+    CHECK_EQ(dumped(1e18), std::string("1000000000000000000\n"));
+    CHECK_EQ(dumped(0.5), std::string("0.5\n"));
+    CHECK_EQ(dumped(-0.25), std::string("-0.25\n"));
+    CHECK_EQ(dumped(1.25), std::string("1.25\n"));
+    CHECK_EQ(dumped(3.14159265), std::string("3.14159\n"));
+    CHECK_EQ(dumped(1e-7), std::string("1e-07\n"));
+    CHECK_EQ(dumped(123456789.5), std::string("1.23457e+08\n"));
+    CHECK_EQ(dumped(-1.5e-300), std::string("-1.5e-300\n"));
+
+    // And against the ostream itself, across magnitudes and rounding cases.
+    auto viaOstream = [](double d) {
+        std::ostringstream o;
+        if (d == (long long)d) o << (long long)d;
+        else o << d;
+        o << "\n";
+        return o.str();
+    };
+    const double mantissas[] = { 1, -1, 1.5, 2.25, 9.999995, 9.9999949, 1.0000005,
+                                 3.14159265358979, -7.123456789, 0.1, 0.3333333333 };
+    for (double m : mantissas) {
+        for (double scale = 1e-12; scale <= 1e17; scale *= 10) {
+            const double d = m * scale;
+            CHECK_EQ(dumped(d), viaOstream(d));
+        }
+    }
+}
+
 TEST(json_dump_escapes_specials) {
     json::Value v;
     v.set("s", std::string("a\"b\\c\nd\te"));
@@ -303,9 +341,9 @@ TEST(json_getint_rejects_out_of_range_numbers) {
 
 TEST(json_dump_escapes_every_control_character) {
     auto escaped = [](const std::string& s) {
-        std::ostringstream o;
+        std::string o;
         json::escape(o, s);
-        return o.str();
+        return o;
     };
     CHECK_EQ(escaped("\x01"), std::string(R"("\u0001")"));
     CHECK_EQ(escaped("\x1F"), std::string(R"("\u001F")"));
