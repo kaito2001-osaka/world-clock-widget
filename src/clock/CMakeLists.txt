@@ -37,6 +37,7 @@ add_executable(WorldClockGadget WIN32
     Startup.cpp
     Renderer.cpp
     WorldClockGadget.rc   # app icon + version info
+    WorldClockGadget.manifest   # DPI awareness, segment heap, supported OS
 )
 
 target_link_libraries(WorldClockGadget PRIVATE
