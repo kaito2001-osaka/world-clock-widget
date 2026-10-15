@@ -12,7 +12,7 @@
 double Percentile(std::vector<double> samples, double p);
 
 // A golden file is this 16-byte header followed by stride * height bytes of
-// premultiplied BGRA, top-down -- the DIB exactly as UpdateLayeredWindow gets
+// premultiplied BGRA, top-down -- the frame exactly as UpdateLayeredWindow gets
 // it, alpha included. Little-endian: "WCG1", width, height, stride (uint32).
 struct GoldenHeader {
     uint32_t width  = 0;

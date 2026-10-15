@@ -15,7 +15,6 @@ option(WORLDCLOCK_BUILD_BENCH "Build the render benchmark" OFF)
 add_library(worldclock_core STATIC
     Config.cpp
     ConfigWatch.cpp
-    DibWicBitmap.cpp
     PanelLayout.cpp
     TextFormat.cpp
     TimeEngine.cpp
@@ -42,7 +41,7 @@ add_executable(WorldClockGadget WIN32
 
 target_link_libraries(WorldClockGadget PRIVATE
     worldclock_core
-    d2d1 dwrite user32 gdi32 shell32 ole32 advapi32 wtsapi32
+    d2d1 d3d11 dwrite user32 gdi32 shell32 ole32 advapi32 wtsapi32
 )
 
 if (MSVC)

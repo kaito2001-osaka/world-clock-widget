@@ -1,23 +1,28 @@
 // Direct2D / DirectWrite renderer for the gadget panel.
 //
-// Rendering model: we render into a 32-bit premultiplied-alpha DIB through a
-// Direct2D WIC bitmap render target whose bitmap is a view of the DIB's memory
-// (DibWicBitmap.hpp), then present with UpdateLayeredWindow. This gives true
-// per-pixel alpha (smooth rounded corners, clean anti-aliased text) plus an
-// overall window opacity applied through the layered blend's constant alpha,
-// with a single pixel buffer and no per-frame copy.
+// Rendering model: Direct2D draws, on a WARP (software) Direct3D 11 device we
+// create ourselves, into a 32-bit premultiplied-alpha bitmap that is GDI
+// compatible, and the frame is presented by handing that bitmap's GDI DC to
+// UpdateLayeredWindow. This gives true per-pixel alpha (smooth rounded corners,
+// clean anti-aliased text) plus an overall window opacity applied through the
+// layered blend's constant alpha. On WARP the DC is a view of the bitmap's own
+// memory, so there is a single pixel buffer and no per-frame copy.
+//
+// The device is ours, rather than the one Direct2D makes for a WIC bitmap
+// render target, so that it can be created without WARP's worker threads: see
+// CreateDevice.
 //
 // Frame cost: everything that depends only on the config, the DPI and the font
 // is computed when one of those changes, not per frame -- including where each
 // block sits (PanelLayout.hpp). A steady-state frame resolves each city's local
-// time, repaints only each city's clock line or face (the DIB still holds the
-// rest of the previous frame), and presents only that area. The whole panel is
-// redrawn after a config, DPI or surface change, and when a date line changes.
+// time, repaints only each city's clock line or face (the bitmap still holds
+// the rest of the previous frame), and presents only that area. The whole
+// panel is redrawn after a config, DPI or surface change, and when a date line
+// changes.
 #pragma once
 #include <windows.h>
-#include <d2d1.h>
+#include <d2d1_1.h>
 #include <dwrite.h>
-#include <wincodec.h>
 #include <wrl/client.h>
 #include <chrono>
 #include <string>
@@ -48,13 +53,16 @@ public:
     // Instrumentation for WorldClockBench only; the product exe is compiled
     // without it, so neither its code nor this class's layout changes.
     // QPC stamps taken through the last Render(): start, after UpdateFrame,
-    // before BeginDraw, after EndDraw, a second stamp right after EndDraw
-    // (where a full-surface CopyPixels used to end), after the present.
+    // before BeginDraw, once the drawing is rasterized and the target's DC
+    // obtained, a second stamp there (where a full-surface CopyPixels used to
+    // end), after the present (UpdateLayeredWindow, ReleaseDC and EndDraw).
     // A frame that returned early leaves the later stamps at zero.
     struct BenchStamps { LONGLONG t[6]; };
     const BenchStamps& BenchLastFrame() const { return bench_; }
-    // The DIB handed to UpdateLayeredWindow, i.e. exactly what is presented.
-    const void* BenchPixels() const { return bits_; }
+    // The last frame as UpdateLayeredWindow reads it, through the target's
+    // DC, as top-down rows of width * 4 bytes. Null if it could not be read.
+    // Read on demand, so the timed frames do not pay for it.
+    const void* BenchPixels();
     SIZE BenchSurface() const { return surface_; }
     // Make the next Render() redraw the whole panel, as the first frame does;
     // the reference that incremental frames are compared against.
@@ -64,18 +72,22 @@ public:
 private:
 #ifdef WORLDCLOCK_BENCH
     BenchStamps bench_{};
+    std::vector<unsigned char> benchPixels_;
 #endif
-    Microsoft::WRL::ComPtr<ID2D1Factory>      d2dFactory_;
-    Microsoft::WRL::ComPtr<IDWriteFactory>    dwFactory_;
-    Microsoft::WRL::ComPtr<IWICBitmap>        wicBitmap_;     // view of the DIB, per-size
-    Microsoft::WRL::ComPtr<ID2D1RenderTarget> rt_;            // WIC bitmap target
+    Microsoft::WRL::ComPtr<ID2D1Factory1>      d2dFactory_;
+    Microsoft::WRL::ComPtr<IDWriteFactory>     dwFactory_;
+    // The device context on our WARP device, and its GDI view. They hold the
+    // device; the brushes belong to it too, so they outlive a resize.
+    Microsoft::WRL::ComPtr<ID2D1DeviceContext> rt_;
+    Microsoft::WRL::ComPtr<ID2D1GdiInteropRenderTarget> gdi_;
+    Microsoft::WRL::ComPtr<ID2D1Bitmap1>       target_;   // GDI-compatible, per-size
 
     Microsoft::WRL::ComPtr<IDWriteTextFormat> fmtLabel_;
     Microsoft::WRL::ComPtr<IDWriteTextFormat> fmtTime_;
     Microsoft::WRL::ComPtr<IDWriteTextFormat> fmtDate_;
 
-    // Fixed colours, so they live as long as the render target rather than
-    // being created eleven times a frame.
+    // Fixed colours, so they live as long as the device rather than being
+    // created eleven times a frame.
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brBg_, brLabel_, brTime_, brDate_;
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brAmFace_, brAmHand_, brAmTick_;
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brPmFace_, brPmHand_, brPmTick_;
@@ -112,18 +124,14 @@ private:
     std::vector<CityGeometry> geom_;       // block positions + dirty rects
     RECT         dirtyUnion_ = { 0, 0, 0, 0 };   // what a steady frame presents
     // The next frame repaints and presents the whole panel rather than only
-    // the dirty rects: nothing valid is in the DIB yet, or something outside
+    // the dirty rects: nothing valid is in the bitmap yet, or something outside
     // the dirty rects (layout, a date line) has changed.
     bool         fullRedraw_ = true;
     float        maxW_ = 0.f;              // widest block, for vertical layout
     std::wstring dateFormatW_;             // UTF-16 date pattern, converted once
 
     HWND    hwnd_   = nullptr;
-    HDC     memDC_  = nullptr;     // memory DC holding the DIB
-    HBITMAP dib_    = nullptr;     // top-down 32bpp BGRA
-    HBITMAP oldBmp_ = nullptr;
-    void*   bits_   = nullptr;
-    SIZE    surface_ = { 0, 0 };   // current DIB size
+    SIZE    surface_ = { 0, 0 };   // current target size
 
     UINT    dpi_ = 96;
     Config  cfg_;
@@ -137,9 +145,13 @@ private:
     D2D1_SIZE_F worstTime_ = { 0.f, 0.f };
     D2D1_SIZE_F worstDate_ = { 0.f, 0.f };
 
+    bool CreateDevice();            // device, context and brushes
+    void ReleaseDevice();           // all of the above, and the target
     bool EnsureSurface(int w, int h);
-    bool CreateDeviceResources();   // brushes, tied to the render target
+    bool CreateDeviceResources();   // brushes, tied to the device
     void ReleaseDeviceResources();
+    // UpdateLayeredWindowIndirect from `frame`, the target's DC.
+    bool Present(HDC frame, SIZE size, bool full);
     bool CreateTextFormats();       // false when a font could not be created
     void RecomputeWorstCaseSizes();
     void RecomputeLayout();         // m_, block sizes, maxW_, desired_, clocks_, geom_

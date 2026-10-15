@@ -1,16 +1,18 @@
 #include "Renderer.hpp"
-#include "DibWicBitmap.hpp"
 #include "TextFormat.hpp"
 #include "TimeEngine.hpp"
 
 #include <d2d1helper.h>
+#include <d3d11.h>
 #include <array>
 #include <string>
 #include <vector>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 
 #pragma comment(lib, "d2d1.lib")
+#pragma comment(lib, "d3d11.lib")
 #pragma comment(lib, "dwrite.lib")
 
 using Microsoft::WRL::ComPtr;
@@ -104,6 +106,7 @@ bool Renderer::Init(HWND hwnd, const Config& cfg) {
     if (FAILED(DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory),
                                    reinterpret_cast<IUnknown**>(dwFactory_.GetAddressOf()))))
         return false;
+    if (!CreateDevice()) return false;
 
     if (!CreateTextFormats()) return false;
     RecomputeLayout();
@@ -115,17 +118,7 @@ void Renderer::Shutdown() {
     visuals_.clear();
     sizes_.clear();
     lts_.clear();
-    ReleaseDeviceResources();
-    // The render target and its bitmap point into the DIB, so they go first.
-    rt_.Reset(); wicBitmap_.Reset();
-    if (memDC_) {
-        if (oldBmp_) SelectObject(memDC_, oldBmp_);
-        DeleteDC(memDC_);
-        memDC_ = nullptr;
-    }
-    if (dib_) { DeleteObject(dib_); dib_ = nullptr; }
-    bits_ = nullptr;              // the DIB it pointed into is gone
-    surface_ = { 0, 0 };
+    ReleaseDevice();
     fmtLabel_.Reset(); fmtTime_.Reset(); fmtDate_.Reset();
     dwFactory_.Reset(); d2dFactory_.Reset();
 }
@@ -366,61 +359,72 @@ void Renderer::ReleaseDeviceResources() {
     brPmFace_.Reset(); brPmHand_.Reset(); brPmTick_.Reset();
 }
 
+// The WIC bitmap render target that drew the panel before runs on a WARP
+// device of Direct2D's own, and WARP rasterizes on a pool of worker threads.
+// Those stayed resident: ten or so, for a panel drawn once a second. On a
+// device of our own they can be turned off. Every frame is then rasterized on
+// this thread: it takes longer from start to end, but less CPU in all, and the
+// threads and their memory are gone (WorldClockBench's cycles column; #22).
+bool Renderer::CreateDevice() {
+    ComPtr<ID3D11Device> d3d;
+    if (FAILED(D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_WARP, nullptr,
+                                 D3D11_CREATE_DEVICE_BGRA_SUPPORT |   // required by Direct2D
+                                 D3D11_CREATE_DEVICE_SINGLETHREADED |
+                                 D3D11_CREATE_DEVICE_PREVENT_INTERNAL_THREADING_OPTIMIZATIONS,
+                                 nullptr, 0, D3D11_SDK_VERSION, &d3d, nullptr, nullptr)))
+        return false;
+
+    ComPtr<IDXGIDevice> dxgi;
+    ComPtr<ID2D1Device> device;
+    if (FAILED(d3d.As(&dxgi)) ||
+        FAILED(d2dFactory_->CreateDevice(dxgi.Get(), &device)) ||
+        FAILED(device->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &rt_)) ||
+        FAILED(rt_.As(&gdi_))) {
+        ReleaseDevice();
+        return false;
+    }
+    rt_->SetDpi(96.f, 96.f);   // DPI scaling applied manually via Sc()
+    rt_->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE); // ClearType needs opaque bg
+
+    if (!CreateDeviceResources()) {
+        ReleaseDevice();
+        return false;
+    }
+    return true;
+}
+
+void Renderer::ReleaseDevice() {
+    ReleaseDeviceResources();
+    target_.Reset();
+    gdi_.Reset();
+    rt_.Reset();
+    surface_ = { 0, 0 };
+}
+
 bool Renderer::EnsureSurface(int w, int h) {
     if (w < 1) w = 1;
     if (h < 1) h = 1;
-    if (memDC_ && surface_.cx == w && surface_.cy == h) return true;
+    // Render releases the device when it is lost; start over with a new one.
+    if (!rt_ && !CreateDevice()) return false;
+    if (target_ && surface_.cx == w && surface_.cy == h) return true;
 
-    // The render target draws through a bitmap over the old DIB's memory, so
-    // it has to be gone before that memory is. The brushes belong to the
-    // render target, so they go with it.
-    ReleaseDeviceResources();
-    rt_.Reset(); wicBitmap_.Reset();
+    rt_->SetTarget(nullptr);
+    target_.Reset();
+    surface_ = { 0, 0 };
 
-    if (memDC_) {
-        if (oldBmp_) { SelectObject(memDC_, oldBmp_); oldBmp_ = nullptr; }
-        DeleteDC(memDC_); memDC_ = nullptr;
-    }
-    if (dib_) { DeleteObject(dib_); dib_ = nullptr; }
-    bits_ = nullptr;
-
-    HDC screen = GetDC(nullptr);
-    memDC_ = CreateCompatibleDC(screen);
-    ReleaseDC(nullptr, screen);
-    if (!memDC_) return false;
-
-    BITMAPINFO bi{};
-    bi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-    bi.bmiHeader.biWidth = w;
-    bi.bmiHeader.biHeight = -h;       // top-down
-    bi.bmiHeader.biPlanes = 1;
-    bi.bmiHeader.biBitCount = 32;
-    bi.bmiHeader.biCompression = BI_RGB;
-
-    dib_ = CreateDIBSection(memDC_, &bi, DIB_RGB_COLORS, &bits_, nullptr, 0);
-    if (!dib_) { DeleteDC(memDC_); memDC_ = nullptr; return false; }
-    oldBmp_ = (HBITMAP)SelectObject(memDC_, dib_);
-
-    // D2D renders into a WIC bitmap because a GDI DC target would drop the
-    // alpha. The bitmap is a view of the DIB's own memory, so EndDraw leaves
-    // the frame exactly where UpdateLayeredWindow reads it: no second buffer
-    // and no per-frame copy.
-    if (FAILED(CreateDibWicBitmap(bits_, (UINT)w, (UINT)h, (UINT)w * 4,
-                                  wicBitmap_.GetAddressOf())))
-        return false;
-    D2D1_RENDER_TARGET_PROPERTIES props = D2D1::RenderTargetProperties(
-        D2D1_RENDER_TARGET_TYPE_DEFAULT,
+    // GDI compatible, so that UpdateLayeredWindow can read the frame through
+    // the bitmap's DC; a DC render target would drop the alpha instead.
+    const D2D1_BITMAP_PROPERTIES1 props = D2D1::BitmapProperties1(
+        D2D1_BITMAP_OPTIONS_TARGET | D2D1_BITMAP_OPTIONS_GDI_COMPATIBLE,
         D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED),
         96.f, 96.f); // DPI scaling applied manually via Sc()
-    if (FAILED(d2dFactory_->CreateWicBitmapRenderTarget(wicBitmap_.Get(), props,
-                                                        rt_.ReleaseAndGetAddressOf())))
+    if (FAILED(rt_->CreateBitmap(D2D1::SizeU((UINT32)w, (UINT32)h), nullptr, 0, props,
+                                 &target_)))
         return false;
-    rt_->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE); // ClearType needs opaque bg
-
-    if (!CreateDeviceResources()) return false;
+    rt_->SetTarget(target_.Get());
 
     surface_ = { w, h };
-    fullRedraw_ = true;   // a new DIB holds no previous frame to build on
+    fullRedraw_ = true;   // a new bitmap holds no previous frame to build on
     return true;
 }
 
@@ -479,7 +483,7 @@ void Renderer::Render(system_clock::time_point now) {
         DrawBackground(rt_.Get());
         for (size_t i = 0; i < geom_.size(); ++i) DrawCity(rt_.Get(), i, false);
     } else {
-        // Everything outside the dirty rects is still in the DIB from the
+        // Everything outside the dirty rects is still in the bitmap from the
         // previous frame. Inside each one, repaint exactly what a full redraw
         // would put there: the background, the clock line or face, and the
         // label or date only where their ink reaches in. The clip is aliased
@@ -501,30 +505,46 @@ void Renderer::Render(system_clock::time_point now) {
         }
     }
 
-    const HRESULT hr = rt_->EndDraw();
-    if (FAILED(hr)) {
-        // Whatever reached the DIB is not a frame to build the next one on.
-        fullRedraw_ = true;
-        if (hr == D2DERR_RECREATE_TARGET) {
-            surface_ = { 0, 0 };
-            return;
-        }
-    }
+    // Rasterize now, so that a frame that failed to draw is never presented.
+    HRESULT hr = rt_->Flush();
+    // The bitmap as a GDI DC, which is what UpdateLayeredWindow reads. It is
+    // only valid inside BeginDraw / EndDraw, so the frame is presented here.
+    HDC frame = nullptr;
+    if (SUCCEEDED(hr)) hr = gdi_->GetDC(D2D1_DC_INITIALIZE_MODE_COPY, &frame);
     BENCH_STAMP(3);
-    // EndDraw wrote the frame straight into the DIB. Stamp 4 used to close a
+    // Nothing is copied out of the bitmap. Stamp 4 used to close a
     // full-surface CopyPixels; it stays so the bench table keeps its columns.
     BENCH_STAMP(4);
+    if (SUCCEEDED(hr)) {
+        // If the window missed this update, the next frame has to resend it all.
+        if (!Present(frame, SIZE{ w, h }, full)) fullRedraw_ = true;
+        // GDI only read from the DC, so nothing in it has to go back into the
+        // bitmap: the area it changed is empty.
+        RECT unchanged = { 0, 0, 0, 0 };
+        gdi_->ReleaseDC(&unchanged);
+    }
 
-    // Present via UpdateLayeredWindowIndirect: keep current position, set size,
-    // apply overall opacity through the constant source alpha, and on a
-    // steady-state frame copy only the area that was repainted.
-    // Passing null for the screen DC and the position also keeps the window in
-    // place and skips these three calls, but WorldClockBench measured it as a
-    // net loss: the present got faster and the next analog draw slower by more.
+    const HRESULT endHr = rt_->EndDraw();
+    if (FAILED(hr) || FAILED(endHr)) {
+        // Whatever reached the bitmap is not a frame to build the next one on.
+        fullRedraw_ = true;
+        // The device is gone; the next frame creates a new one.
+        if (hr == D2DERR_RECREATE_TARGET || endHr == D2DERR_RECREATE_TARGET) ReleaseDevice();
+        return;
+    }
+    BENCH_STAMP(5);
+}
+
+// Present via UpdateLayeredWindowIndirect: keep current position, set size,
+// apply overall opacity through the constant source alpha, and on a
+// steady-state frame copy only the area that was repainted.
+// Passing null for the screen DC and the position also keeps the window in
+// place and skips these three calls, but WorldClockBench measured it as a
+// net loss: the present got faster and the next analog draw slower by more.
+bool Renderer::Present(HDC frame, SIZE size, bool full) {
     HDC screen = GetDC(nullptr);
     RECT wr{}; GetWindowRect(hwnd_, &wr);
     POINT dst = { wr.left, wr.top };
-    SIZE size = { w, h };
     POINT src = { 0, 0 };
     BLENDFUNCTION bf{};
     bf.BlendOp = AC_SRC_OVER;
@@ -535,18 +555,59 @@ void Renderer::Render(system_clock::time_point now) {
     ulw.hdcDst   = screen;
     ulw.pptDst   = &dst;
     ulw.psize    = &size;
-    ulw.hdcSrc   = memDC_;
+    ulw.hdcSrc   = frame;
     ulw.pptSrc   = &src;
     ulw.pblend   = &bf;
     ulw.dwFlags  = ULW_ALPHA;
     // A full frame may also be a new size, and a dirty rect is only accepted
     // when the size is unchanged; it also has to cover everything anyway.
     ulw.prcDirty = full ? nullptr : &dirtyUnion_;
-    // If the window missed this update, the next frame has to resend it all.
-    if (!UpdateLayeredWindowIndirect(hwnd_, &ulw)) fullRedraw_ = true;
+    const bool ok = UpdateLayeredWindowIndirect(hwnd_, &ulw) != FALSE;
     ReleaseDC(nullptr, screen);
-    BENCH_STAMP(5);
+    return ok;
 }
+
+#ifdef WORLDCLOCK_BENCH
+// Reads through GDI, as UpdateLayeredWindow does, rather than from the DC
+// bitmap's bits: WARP pads a texture's rows (to 8 bytes; a 111 px row takes
+// 448), and the DC bitmap does not report that pitch.
+const void* Renderer::BenchPixels() {
+    if (!rt_ || !target_) return nullptr;
+    const int w = surface_.cx, h = surface_.cy;
+    benchPixels_.resize((size_t)w * 4 * (size_t)h);
+
+    BITMAPINFO bi{};
+    bi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    bi.bmiHeader.biWidth = w;
+    bi.bmiHeader.biHeight = -h;       // top-down
+    bi.bmiHeader.biPlanes = 1;
+    bi.bmiHeader.biBitCount = 32;
+    bi.bmiHeader.biCompression = BI_RGB;
+
+    bool ok = false;
+    rt_->BeginDraw();
+    HDC frame = nullptr;
+    if (SUCCEEDED(gdi_->GetDC(D2D1_DC_INITIALIZE_MODE_COPY, &frame))) {
+        void* bits = nullptr;
+        HDC mem = CreateCompatibleDC(frame);
+        HBITMAP dib = mem ? CreateDIBSection(mem, &bi, DIB_RGB_COLORS, &bits, nullptr, 0)
+                          : nullptr;
+        if (dib) {
+            HGDIOBJ old = SelectObject(mem, dib);
+            // A 32-bit SRCCOPY between DIBs keeps the alpha byte as it is.
+            ok = BitBlt(mem, 0, 0, w, h, frame, 0, 0, SRCCOPY) && GdiFlush();
+            if (ok) std::memcpy(benchPixels_.data(), bits, benchPixels_.size());
+            SelectObject(mem, old);
+            DeleteObject(dib);
+        }
+        if (mem) DeleteDC(mem);
+        RECT unchanged = { 0, 0, 0, 0 };
+        gdi_->ReleaseDC(&unchanged);
+    }
+    if (FAILED(rt_->EndDraw())) ok = false;
+    return ok ? benchPixels_.data() : nullptr;
+}
+#endif
 
 void Renderer::DrawBackground(ID2D1RenderTarget* rt) {
     rt->Clear(D2D1::ColorF(0, 0.f)); // fully transparent

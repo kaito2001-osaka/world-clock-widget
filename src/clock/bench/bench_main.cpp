@@ -10,7 +10,7 @@
 // synthetic time, as fast as it will go, and times each phase of a frame with
 // QPC through the WORLDCLOCK_BENCH hooks in Renderer.cpp.
 //
-// Goldens are the presented DIB (premultiplied BGRA, alpha included) for a
+// Goldens are the presented frame (premultiplied BGRA, alpha included) for a
 // fixed time and config. A screen capture cannot see alpha; these can. They
 // depend on the installed fonts and DirectWrite, so they are generated
 // locally from main and checked on a branch rather than committed.
@@ -241,7 +241,7 @@ void PrintHeader(int frames) {
                 "do not show it.\n\n");
     std::printf("%-7s %-10s %-5s %-6s %3s %3s %11s %6s | %15s %15s %15s %15s %15s | %9s | %15s\n",
                 "mode", "layout", "sec", "size", "dpi", "cty", "surface", "KiB",
-                "UpdateFrame", "Begin..EndDraw", "CopyPixels", "Present", "total", "allocs",
+                "UpdateFrame", "Begin..GetDC", "CopyPixels", "Present", "total", "allocs",
                 "kcycles");
 }
 
@@ -440,7 +440,7 @@ std::vector<system_clock::time_point> IncrementalTimeline() {
 }
 
 // Renders the timeline twice side by side, once incrementally and once with a
-// full redraw forced on every frame, and requires the presented DIBs to match
+// full redraw forced on every frame, and requires the presented frames to match
 // byte for byte after every frame.
 int RunIncrementalCheck(HWND hwnd, const std::filesystem::path& dumpDir) {
     const std::vector<system_clock::time_point> timeline = IncrementalTimeline();
