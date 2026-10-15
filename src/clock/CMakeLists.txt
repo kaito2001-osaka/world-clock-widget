@@ -37,6 +37,7 @@ add_executable(WorldClockGadget WIN32
     Startup.cpp
     Renderer.cpp
     WorldClockGadget.rc   # app icon + version info
+    WorldClockGadget.manifest   # DPI awareness, segment heap, supported OS
 )
 
 target_link_libraries(WorldClockGadget PRIVATE
@@ -55,6 +56,10 @@ if (MSVC)
     target_compile_options(worldclock_core PRIVATE /W4 /permissive- /utf-8 /EHsc)
     target_compile_options(WorldClockGadget PRIVATE /W4 /permissive- /utf-8 /EHsc)
     target_link_options(WorldClockGadget PRIVATE /OPT:REF /OPT:ICF)
+    # shell32 only resolves the AppData folder once at startup; main.cpp then
+    # unloads it, so it must be delay-loaded and unloadable.
+    target_link_options(WorldClockGadget PRIVATE /DELAYLOAD:shell32.dll /DELAY:UNLOAD)
+    target_link_libraries(WorldClockGadget PRIVATE delayimp)
 endif()
 
 if (WORLDCLOCK_BUILD_TESTS)

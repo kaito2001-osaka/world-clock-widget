@@ -3,7 +3,6 @@
 
 #include <windows.h>
 #include <shlobj.h>
-#include <fstream>
 
 #pragma comment(lib, "shell32.lib")
 
@@ -74,10 +73,14 @@ bool WriteFileAtomic(const std::wstring& path, const std::string& data) {
     // "config.json.settings.tmp", so neither writer can clobber the other's.
     std::wstring tmp = path + L".gadget.tmp";
     {
-        std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
-        if (!f) return false;
-        f.write(data.data(), (std::streamsize)data.size());
-        if (!f) return false;
+        HANDLE h = CreateFileW(tmp.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS,
+                               FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (h == INVALID_HANDLE_VALUE) return false;
+        DWORD written = 0;
+        const bool ok = WriteFile(h, data.data(), (DWORD)data.size(), &written, nullptr) &&
+                        written == data.size();
+        CloseHandle(h);
+        if (!ok) { DeleteFileW(tmp.c_str()); return false; }
     }
     // Replace destination atomically.
     for (int attempt = 1;; ++attempt) {
@@ -90,16 +93,29 @@ bool WriteFileAtomic(const std::wstring& path, const std::string& data) {
     return false;
 }
 
+// The roaming AppData folder, resolved on first use and then kept. It is the
+// gadget's only use of shell32, so after this the exe can unload it. Resolved
+// through the known-folder API rather than %APPDATA% because that is what the
+// settings app's Environment.GetFolderPath does; the two must agree.
+const std::wstring& RoamingAppData() {
+    static const std::wstring dir = [] {
+        PWSTR appdata = nullptr;
+        std::wstring d;
+        if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_RoamingAppData, 0, nullptr, &appdata))) {
+            d = appdata;
+            CoTaskMemFree(appdata);
+        }
+        return d;
+    }();
+    return dir;
+}
+
 } // namespace
 
 std::wstring ConfigDir() {
-    PWSTR appdata = nullptr;
-    std::wstring dir;
-    if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_RoamingAppData, 0, nullptr, &appdata))) {
-        dir = appdata;
-        CoTaskMemFree(appdata);
-    }
-    dir += L"\\WorldClockGadget";
+    std::wstring dir = RoamingAppData() + L"\\WorldClockGadget";
+    // On every call, not once: the folder can be deleted while we run, and the
+    // writers and the watcher's reopen rely on getting it back here.
     CreateDirectoryW(dir.c_str(), nullptr); // ignore "already exists"
     dir += L"\\";
     return dir;
@@ -209,7 +225,7 @@ static std::string SizeStr(SizeClass s) {
                  default: return "medium"; }
 }
 
-bool WriteConfigFull(const Config& c) {
+bool WriteConfigFile(const std::wstring& path, const Config& c) {
     json::Value root; root.type = json::Type::Object;
     json::Value arr;  arr.type  = json::Type::Array;
     for (auto& e : c.cities) {
@@ -231,8 +247,10 @@ bool WriteConfigFull(const Config& c) {
     root.set("lockPosition", c.lockPosition);
     root.set("launchAtStartup", c.launchAtStartup);
     root.set("theme", c.theme);
-    return WriteFileAtomic(ConfigPath(), json::dump(root));
+    return WriteFileAtomic(path, json::dump(root));
 }
+
+bool WriteConfigFull(const Config& c) { return WriteConfigFile(ConfigPath(), c); }
 
 bool WriteDefaultConfigIfMissing() {
     if (GetFileAttributesW(ConfigPath().c_str()) != INVALID_FILE_ATTRIBUTES)

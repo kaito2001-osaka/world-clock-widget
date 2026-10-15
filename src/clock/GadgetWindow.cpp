@@ -5,7 +5,6 @@
 #include "WindowPlacement.hpp"
 #include "resource.h"
 
-#include <shellapi.h>
 #include <wtsapi32.h>
 #include <string>
 #include <chrono>
@@ -425,11 +424,21 @@ void GadgetWindow::ShowWarning(const std::wstring& text) {
     showingNotice_ = false;
 }
 
+// CreateProcessW rather than ShellExecuteW: the latter is the one call that
+// would keep shell32 loaded for the life of the gadget. The settings app is a
+// plain asInvoker exe next to ours, so the shell has nothing to add.
 void GadgetWindow::LaunchSettings() {
-    std::wstring exe = ExeDir() + L"WorldClockSettings.exe";
-    HINSTANCE r = ShellExecuteW(hwnd_, L"open", exe.c_str(), nullptr,
-                                ExeDir().c_str(), SW_SHOWNORMAL);
-    if ((INT_PTR)r <= 32) {
+    const std::wstring dir = ExeDir();
+    const std::wstring exe = dir + L"WorldClockSettings.exe";
+    std::wstring cmdLine = L"\"" + exe + L"\"";   // CreateProcessW may write to it
+    STARTUPINFOW si{};
+    si.cb = sizeof(si);
+    PROCESS_INFORMATION pi{};
+    if (CreateProcessW(exe.c_str(), cmdLine.data(), nullptr, nullptr, FALSE, 0, nullptr,
+                       dir.c_str(), &si, &pi)) {
+        CloseHandle(pi.hThread);
+        CloseHandle(pi.hProcess);
+    } else {
         MessageBoxW(hwnd_,
             L"設定アプリ (WorldClockSettings.exe) が見つかりませんでした。\n"
             L"config.json を直接編集してください:\n"

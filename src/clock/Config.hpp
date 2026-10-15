@@ -103,7 +103,10 @@ bool NeedsApply(bool shownIsFromFile, const Config& shown, const Config& loaded)
 // Only writes when the file is known to be absent; any other failure to look
 // at it leaves it alone.
 bool         WriteDefaultConfigIfMissing();
-bool         WriteConfigFull(const Config& c);  // serialize full config -> config.json
+// Serialize the full config and replace `path` with it. Leaves no temp file
+// behind on failure.
+bool         WriteConfigFile(const std::wstring& path, const Config& c);
+bool         WriteConfigFull(const Config& c);  // WriteConfigFile(ConfigPath(), c)
 
 WindowState  LoadState();
 bool         SaveState(const WindowState& s);
