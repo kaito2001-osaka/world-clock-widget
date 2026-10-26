@@ -329,6 +329,10 @@ void Renderer::RebuildVisuals() {
 
         // Force the date layout to be rebuilt against the new width/alignment.
         v.dateLayout.Reset();
+
+        // The dirty rect, the face and the background may all have moved.
+        v.faceCache.Reset();
+        v.faceCached = false;
     }
 }
 
@@ -395,6 +399,10 @@ bool Renderer::CreateDevice() {
 
 void Renderer::ReleaseDevice() {
     ReleaseDeviceResources();
+    for (CityVisual& v : visuals_) {   // bitmaps of this device
+        v.faceCache.Reset();
+        v.faceCached = false;
+    }
     target_.Reset();
     gdi_.Reset();
     rt_.Reset();
@@ -425,7 +433,34 @@ bool Renderer::EnsureSurface(int w, int h) {
 
     surface_ = { w, h };
     fullRedraw_ = true;   // a new bitmap holds no previous frame to build on
+    // Nor are the cached faces known to match it; take them again from it.
+    for (CityVisual& v : visuals_) v.faceCached = false;
     return true;
+}
+
+void Renderer::RefreshFaceCache(size_t index, bool am) {
+    CityVisual& v = visuals_[index];
+    const RECT& d = geom_[index].dirty;
+    v.faceCached = false;
+    // Created once per layout; a palette flip only copies into it again.
+    if (!v.faceCache) {
+        const D2D1_BITMAP_PROPERTIES1 props = D2D1::BitmapProperties1(
+            D2D1_BITMAP_OPTIONS_NONE,
+            D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED),
+            96.f, 96.f);
+        if (FAILED(rt_->CreateBitmap(D2D1::SizeU(UINT32(d.right - d.left),
+                                                 UINT32(d.bottom - d.top)),
+                                     nullptr, 0, props, &v.faceCache)))
+            return;
+    }
+    // Taken from the target rather than drawn again into the bitmap, so the
+    // cache holds the very pixels a full redraw puts there.
+    const D2D1_POINT_2U origin = D2D1::Point2U(0, 0);
+    const D2D1_RECT_U src = D2D1::RectU(UINT32(d.left), UINT32(d.top),
+                                        UINT32(d.right), UINT32(d.bottom));
+    if (FAILED(v.faceCache->CopyFromRenderTarget(&origin, rt_.Get(), &src))) return;
+    v.faceCached = true;
+    v.faceCacheAm = am;
 }
 
 // Resolve each city's local time, and rebuild only the text that changed.
@@ -489,18 +524,40 @@ void Renderer::Render(system_clock::time_point now) {
         // label or date only where their ink reaches in. The clip is aliased
         // and pixel-aligned, so the pixels it lets through are computed
         // exactly as in a full redraw.
+        const bool analog = cfg_.displayMode == DisplayMode::Analog;
         for (size_t i = 0; i < geom_.size(); ++i) {
             const CityGeometry& g = geom_[i];
             const RECT& d = g.dirty;
             if (d.right <= d.left || d.bottom <= d.top) continue;
-            rt_->PushAxisAlignedClip(D2D1::RectF(float(d.left), float(d.top),
-                                                 float(d.right), float(d.bottom)),
-                                     D2D1_ANTIALIAS_MODE_ALIASED);
-            // Away from the rounded corners the background is one flat
-            // colour, and a clear is far cheaper than the rounded fill.
-            if (g.dirtyAvoidsCorners) rt_->Clear(brBg_->GetColor());
-            else                      DrawBackground(rt_.Get());
-            DrawCity(rt_.Get(), i, true);
+            const D2D1_RECT_F clip = D2D1::RectF(float(d.left), float(d.top),
+                                                 float(d.right), float(d.bottom));
+            rt_->PushAxisAlignedClip(clip, D2D1_ANTIALIAS_MODE_ALIASED);
+
+            CityVisual& v = visuals_[i];
+            const bool am = analog && UsesAmPalette(lts_[i]);
+            if (analog && v.faceCached && v.faceCacheAm == am) {
+                // The background and the face as an earlier frame drew them
+                // here. Copied rather than blended, since they replace what
+                // is in the rect; one to one and on whole pixels, so every
+                // pixel comes back exactly as it was.
+                rt_->SetPrimitiveBlend(D2D1_PRIMITIVE_BLEND_COPY);
+                rt_->DrawBitmap(v.faceCache.Get(), clip, 1.f,
+                                D2D1_INTERPOLATION_MODE_NEAREST_NEIGHBOR, nullptr);
+                rt_->SetPrimitiveBlend(D2D1_PRIMITIVE_BLEND_SOURCE_OVER);
+            } else {
+                // Away from the rounded corners the background is one flat
+                // colour, and a clear is far cheaper than the rounded fill.
+                if (g.dirtyAvoidsCorners) rt_->Clear(brBg_->GetColor());
+                else                      DrawBackground(rt_.Get());
+                if (analog) {
+                    DrawAnalogFace(rt_.Get(), i, am);
+                    rt_->PopAxisAlignedClip();
+                    RefreshFaceCache(i, am);
+                    rt_->PushAxisAlignedClip(clip, D2D1_ANTIALIAS_MODE_ALIASED);
+                }
+            }
+            if (analog) DrawAnalogHands(rt_.Get(), i, am, true);
+            else        DrawCity(rt_.Get(), i, true);
             rt_->PopAxisAlignedClip();
         }
     }
@@ -526,8 +583,10 @@ void Renderer::Render(system_clock::time_point now) {
 
     const HRESULT endHr = rt_->EndDraw();
     if (FAILED(hr) || FAILED(endHr)) {
-        // Whatever reached the bitmap is not a frame to build the next one on.
+        // Whatever reached the bitmap is not a frame to build the next one on,
+        // nor a face to cache.
         fullRedraw_ = true;
+        for (CityVisual& v : visuals_) v.faceCached = false;
         // The device is gone; the next frame creates a new one.
         if (hr == D2DERR_RECREATE_TARGET || endHr == D2DERR_RECREATE_TARGET) ReleaseDevice();
         return;
@@ -644,20 +703,21 @@ void Renderer::DrawCityDigital(ID2D1RenderTarget* rt, size_t index, bool dirtyOn
 }
 
 void Renderer::DrawCityAnalog(ID2D1RenderTarget* rt, size_t index, bool dirtyOnly) {
-    const CityVisual& v = visuals_[index];
-    const CityGeometry& g = geom_[index];
-    const LocalTimeFields& lt = lts_[index];
-    const float r = g.faceR;
-    const float cx = g.faceCx;
-    const float ccy = g.faceCy;
-
     // AM = light face with dark hands, PM = dark face with light hands,
     // picked per city from its own local hour (0-11 = AM). The palette only
     // colours the face, so a flip stays inside the city's dirty rect.
-    bool am = lt.valid && lt.hour < 12;
-    ID2D1SolidColorBrush* face  = am ? brAmFace_.Get() : brPmFace_.Get();
-    ID2D1SolidColorBrush* hands = am ? brAmHand_.Get() : brPmHand_.Get();
-    ID2D1SolidColorBrush* tick  = am ? brAmTick_.Get() : brPmTick_.Get();
+    const bool am = UsesAmPalette(lts_[index]);
+    DrawAnalogFace(rt, index, am);
+    DrawAnalogHands(rt, index, am, dirtyOnly);
+}
+
+void Renderer::DrawAnalogFace(ID2D1RenderTarget* rt, size_t index, bool am) {
+    const CityGeometry& g = geom_[index];
+    const float r = g.faceR;
+    const float cx = g.faceCx;
+    const float ccy = g.faceCy;
+    ID2D1SolidColorBrush* face = am ? brAmFace_.Get() : brPmFace_.Get();
+    ID2D1SolidColorBrush* tick = am ? brAmTick_.Get() : brPmTick_.Get();
 
     D2D1_ELLIPSE e = D2D1::Ellipse(D2D1::Point2F(cx, ccy), r, r);
     rt->FillEllipse(e, face);
@@ -668,6 +728,16 @@ void Renderer::DrawCityAnalog(ID2D1RenderTarget* rt, size_t index, bool dirtyOnl
                      D2D1::Point2F(cx + d.s * (r * 0.95f), ccy - d.c * (r * 0.95f)),
                      tick, m_.tickStroke);
     }
+}
+
+void Renderer::DrawAnalogHands(ID2D1RenderTarget* rt, size_t index, bool am, bool dirtyOnly) {
+    const CityVisual& v = visuals_[index];
+    const CityGeometry& g = geom_[index];
+    const LocalTimeFields& lt = lts_[index];
+    const float r = g.faceR;
+    const float cx = g.faceCx;
+    const float ccy = g.faceCy;
+    ID2D1SolidColorBrush* hands = am ? brAmHand_.Get() : brPmHand_.Get();
 
     if (lt.valid) {
         float sec = float(lt.second);

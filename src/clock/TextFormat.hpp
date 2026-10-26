@@ -33,6 +33,11 @@ std::wstring FormatDatePattern(const LocalTimeFields& f, const std::wstring& pat
 // caller skip formatting (and allocating) until the day actually changes.
 bool SameDate(const LocalTimeFields& a, const LocalTimeFields& b);
 
+// Whether an analog face shows the AM (light) palette rather than the PM
+// (dark) one: local hours 0-11. Invalid fields get the PM palette. The cached
+// face is keyed on this, so the renderer asks it in one place only.
+bool UsesAmPalette(const LocalTimeFields& f);
+
 // Substitute every digit with `wide` so a measurement reflects the worst-case
 // width for that pattern. Digits in Segoe UI do not share an advance width, so
 // measuring the live string would resize the panel every second.
