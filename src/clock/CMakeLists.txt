@@ -16,6 +16,7 @@ add_library(worldclock_core STATIC
     Config.cpp
     ConfigWatch.cpp
     PanelLayout.cpp
+    Strings.cpp
     TextFormat.cpp
     TimeEngine.cpp
     TimerCadence.cpp

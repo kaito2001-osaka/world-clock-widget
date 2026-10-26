@@ -28,6 +28,7 @@ cities around the world, with automatic and always-correct DST handling.
 - 🪟 **Sits behind other windows** by default, and stays out of the taskbar and Alt-Tab
 - ⚙️ **Windows 11-style settings app** with Fluent design and OK / Cancel / Apply
 - 🚀 **Launch at Windows startup** (no admin rights required)
+- 🌐 **English and Japanese UI** — follows the Windows display language automatically
 
 <div align="center">
 <img src="docs/digital-vertical.png" height="300" alt="Digital, vertical">
@@ -95,7 +96,7 @@ It never appears in the taskbar or Alt-Tab. To close it, right-click → Exit.
 
 ## Settings
 
-**Right-click the gadget → "設定…" (Settings)** to open the settings app.
+**Right-click the gadget → "Settings…"** to open the settings app.
 
 <div align="center">
 <img src="docs/settings.png" width="460" alt="Settings app">

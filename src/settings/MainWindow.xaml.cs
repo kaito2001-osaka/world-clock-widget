@@ -50,14 +50,11 @@ public partial class MainWindow : FluentWindow
     private void WarnConfigNotLoaded(ConfigLoadStatus status)
     {
         var reason = status == ConfigLoadStatus.Invalid
-            ? "config.json に構文エラーがあるため、読み込めませんでした。"
-            : "config.json を読み込めませんでした（他のアプリが使用中か、アクセスが拒否されています）。\n" +
-              "いったん閉じて開き直すと、読み込めることがあります。";
+            ? Strings.ConfigInvalid
+            : Strings.ConfigUnreadable;
         System.Windows.MessageBox.Show(this,
-            $"{reason}\n既定の設定を表示しています。\n\n" +
-            "このまま保存すると config.json は上書きされます。" +
-            $"上書き前のファイルは次の場所に残します:\n{ConfigModel.BackupPath}",
-            "World Clock の設定",
+            Strings.ConfigNotLoaded(reason, ConfigModel.BackupPath),
+            Strings.WindowTitle,
             System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Warning);
     }
 
@@ -123,7 +120,7 @@ public partial class MainWindow : FluentWindow
         if (_cities.Count == 0)
         {
             System.Windows.MessageBox.Show(this,
-                "少なくとも1つの都市が必要です。", "World Clock の設定",
+                Strings.NeedOneCity, Strings.WindowTitle,
                 System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Warning);
             return false;
         }
@@ -154,7 +151,7 @@ public partial class MainWindow : FluentWindow
         catch (Exception ex)
         {
             System.Windows.MessageBox.Show(this,
-                $"設定の保存に失敗しました:\n{ex.Message}", "World Clock の設定",
+                Strings.SaveFailed(ex.Message), Strings.WindowTitle,
                 System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Error);
             return false;
         }
@@ -186,9 +183,7 @@ public partial class MainWindow : FluentWindow
             else
             {
                 // A typo would otherwise be saved and show as --:-- (#29).
-                CityError.Message =
-                    $"\"{text}\" はタイムゾーン名として認識できません。" +
-                    "一覧から選ぶか、Asia/Tokyo のような IANA 名を入力してください。";
+                CityError.Message = Strings.UnknownTimeZone(text);
                 CityError.IsOpen = true;
                 return;
             }
@@ -253,7 +248,7 @@ public partial class MainWindow : FluentWindow
     {
         if (DatePreview == null || DateFormatBox == null) return;
         var pattern = DateFormatBox.Text ?? "";
-        DatePreview.Text = "プレビュー: " + DateFormats.Format(pattern, DateTime.Now);
+        DatePreview.Text = Strings.PreviewPrefix + DateFormats.Format(pattern, DateTime.Now);
     }
 
     private void UpdateAnalogWarning()
