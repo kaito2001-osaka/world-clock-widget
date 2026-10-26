@@ -1,6 +1,7 @@
 #include "GadgetWindow.hpp"
 #include "ConfigWatch.hpp"
 #include "Startup.hpp"
+#include "Strings.hpp"
 #include "TimerCadence.hpp"
 #include "WindowPlacement.hpp"
 #include "resource.h"
@@ -116,7 +117,7 @@ bool GadgetWindow::Create(HINSTANCE hInst) {
     if (!hwnd_) return false;
 
     if (!renderer_.Init(hwnd_, config_)) {
-        MessageBoxW(nullptr, L"Direct2D の初期化に失敗しました。", L"World Clock", MB_ICONERROR);
+        MessageBoxW(nullptr, Ui().d2dInitFailed, L"World Clock", MB_ICONERROR);
         return false;
     }
     ApplyTopmost();
@@ -407,11 +408,9 @@ void GadgetWindow::OnConfigLoadFailed(ConfigLoadStatus status) {
     configNoticeShown_ = true;
 
     std::wstring text = status == ConfigLoadStatus::ParseFailed
-        ? L"config.json に構文エラーがあるため、読み込めませんでした。\n"
-        : L"config.json を読み込めませんでした"
-          L"（他のアプリが使用中か、アクセスが拒否されています）。\n";
-    text += L"読み込めるようになるまで、直前に読み込めた設定"
-            L"（無い場合は既定の設定）で表示します。config.json は変更しません。";
+        ? Ui().configParseFailed
+        : Ui().configUnreadable;
+    text += Ui().configKeepingLast;
     ShowWarning(text + kConfigPathHint);
 }
 
@@ -439,11 +438,8 @@ void GadgetWindow::LaunchSettings() {
         CloseHandle(pi.hThread);
         CloseHandle(pi.hProcess);
     } else {
-        MessageBoxW(hwnd_,
-            L"設定アプリ (WorldClockSettings.exe) が見つかりませんでした。\n"
-            L"config.json を直接編集してください:\n"
-            L"%APPDATA%\\WorldClockGadget\\config.json",
-            L"World Clock", MB_OK | MB_ICONINFORMATION);
+        MessageBoxW(hwnd_, Ui().settingsAppMissing,
+                    L"World Clock", MB_OK | MB_ICONINFORMATION);
     }
 }
 
@@ -456,10 +452,8 @@ bool GadgetWindow::PersistToggle(bool Config::* field, bool value) {
     std::optional<Config> base = BaseForEdit(onDisk, config_);
     if (!base) {
         std::wstring text = onDisk.status == ConfigLoadStatus::ParseFailed
-            ? L"config.json に構文エラーがあるため、この変更を保存できませんでした。\n"
-              L"ファイルを修正するか、設定アプリから保存し直してください。"
-            : L"config.json を読み込めないため、この変更を保存できませんでした。\n"
-              L"しばらくしてから、もう一度お試しください。";
+            ? Ui().saveParseFailed
+            : Ui().saveUnreadable;
         ShowWarning(text + kConfigPathHint);
         return false;
     }
@@ -467,9 +461,7 @@ bool GadgetWindow::PersistToggle(bool Config::* field, bool value) {
     // On failure the caller leaves config_ (and the menu check) as it was, so
     // what is shown never claims a setting the file does not hold.
     if (!WriteConfigFull(*base)) {
-        ShowWarning(L"config.json に変更を保存できませんでした。\n"
-                    L"ファイルが読み取り専用でないか確認し、もう一度お試しください。"
-                    + std::wstring(kConfigPathHint));
+        ShowWarning(std::wstring(Ui().saveWriteFailed) + kConfigPathHint);
         return false;
     }
     return true;
@@ -478,14 +470,14 @@ bool GadgetWindow::PersistToggle(bool Config::* field, bool value) {
 void GadgetWindow::ShowMenu() {
     POINT pt; GetCursorPos(&pt);
     HMENU menu = CreatePopupMenu();
-    AppendMenuW(menu, MF_STRING, ID_SETTINGS, L"設定…");
+    AppendMenuW(menu, MF_STRING, ID_SETTINGS, Ui().menuSettings);
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING | (config_.alwaysOnTop ? MF_CHECKED : 0),
-                ID_TOPMOST, L"常に最前面");
+                ID_TOPMOST, Ui().menuTopmost);
     AppendMenuW(menu, MF_STRING | (config_.lockPosition ? MF_CHECKED : 0),
-                ID_LOCK, L"位置を固定");
+                ID_LOCK, Ui().menuLock);
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(menu, MF_STRING, ID_EXIT, L"終了");
+    AppendMenuW(menu, MF_STRING, ID_EXIT, Ui().menuExit);
 
     SetForegroundWindow(hwnd_); // required for TrackPopupMenu to dismiss correctly
     int cmd = TrackPopupMenu(menu, TPM_RIGHTBUTTON | TPM_RETURNCMD,

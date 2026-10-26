@@ -48,9 +48,19 @@ WizardStyle=modern
 Name: "en"; MessagesFile: "compiler:Default.isl"
 Name: "ja"; MessagesFile: "compiler:Languages\Japanese.isl"
 
+[CustomMessages]
+en.StartupIcon=Start automatically with Windows
+en.StartupGroup=Startup:
+en.DeleteSettingsPrompt=Also delete the settings file (city list, display settings, window position)?
+en.DeleteSettingsHint=Choose [No] to restore your current settings when you reinstall.
+ja.StartupIcon=Windows 起動時に自動的に開始する
+ja.StartupGroup=スタートアップ:
+ja.DeleteSettingsPrompt=設定ファイル（都市リスト・表示設定・ウィンドウ位置）も削除しますか？
+ja.DeleteSettingsHint=［いいえ］を選ぶと、再インストール時に現在の設定がそのまま復元されます。
+
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
-Name: "startupicon"; Description: "Windows 起動時に自動的に開始する"; GroupDescription: "スタートアップ:"; Flags: unchecked
+Name: "startupicon"; Description: "{cm:StartupIcon}"; GroupDescription: "{cm:StartupGroup}"; Flags: unchecked
 
 [Files]
 ; Whole self-contained staging folder (gadget + settings + .NET runtime).
@@ -129,9 +139,9 @@ begin
     ConfigDir := ExpandConstant('{userappdata}\WorldClockGadget');
     if DirExists(ConfigDir) then
     begin
-      if SuppressibleMsgBox('設定ファイル（都市リスト・表示設定・ウィンドウ位置）も削除しますか？' + #13#10 + #13#10 +
+      if SuppressibleMsgBox(CustomMessage('DeleteSettingsPrompt') + #13#10 + #13#10 +
                 ConfigDir + #13#10 + #13#10 +
-                '［いいえ］を選ぶと、再インストール時に現在の設定がそのまま復元されます。',
+                CustomMessage('DeleteSettingsHint'),
                 mbConfirmation, MB_YESNO, IDNO) = IDYES then
         DelTree(ConfigDir, True, True, True);
     end;

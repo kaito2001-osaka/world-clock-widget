@@ -6,6 +6,7 @@ add_executable(WorldClockTests
     test_configwatch.cpp
     test_json.cpp
     test_panellayout.cpp
+    test_strings.cpp
     test_textformat.cpp
     test_timeengine.cpp
     test_timercadence.cpp

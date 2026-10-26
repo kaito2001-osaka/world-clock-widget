@@ -28,6 +28,7 @@ DST（サマータイム）も自動で正確に追従します。
 - 🪟 **覆われ得る常駐** — 既定では最前面固定にせず、タスクバー・Alt-Tab にも出ない
 - ⚙️ **Windows 11 風の設定アプリ** — Fluent デザイン、OK / キャンセル / 適用
 - 🚀 **Windows 起動時の自動開始**（管理者権限不要）
+- 🌐 **日本語 / 英語の UI** — Windows の表示言語に合わせて自動で切り替え
 
 <div align="center">
 <img src="docs/digital-vertical.png" height="300" alt="デジタル・縦並び">
