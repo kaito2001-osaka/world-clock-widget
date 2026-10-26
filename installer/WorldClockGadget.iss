@@ -72,9 +72,11 @@ Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; \
 Filename: "{app}\{#GadgetExe}"; Description: "{cm:LaunchProgram,{#AppName}}"; \
     Flags: nowait postinstall skipifsilent
 
-[UninstallDelete]
-; Anything the app generated inside its own folder.
-Type: filesandordirs; Name: "{app}"
+; No [UninstallDelete] entry for {app}. Neither exe writes there (settings live in
+; %APPDATA%\WorldClockGadget), and the normal uninstall already removes the
+; installed files and the emptied folder. A wildcard delete would also take the
+; user's own files when {app} is an existing folder such as C:\Tools. If the app
+; ever creates files in {app}, list them here by name.
 
 [Code]
 // The gadget is a WS_EX_TOOLWINDOW / NOACTIVATE window, so the Restart Manager
