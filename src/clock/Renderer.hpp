@@ -16,7 +16,9 @@
 // is computed when one of those changes, not per frame -- including where each
 // block sits (PanelLayout.hpp). A steady-state frame resolves each city's local
 // time, repaints only each city's clock line or face (the bitmap still holds
-// the rest of the previous frame), and presents only that area. The whole
+// the rest of the previous frame), and presents only that area. An analog
+// face's static part is cached per city, so such a frame blits it and draws
+// only the hands. The whole
 // panel is redrawn after a config, DPI or surface change, and when a date line
 // changes.
 #pragma once
@@ -107,6 +109,15 @@ private:
         // and so has to be redrawn inside it on a steady-state frame.
         bool labelInDirty = true;
         bool dateInDirty = true;
+        // Analog only: the city's dirty rect as a steady-state frame paints it
+        // before the hands -- background, face, rim and ticks -- copied out of
+        // the target, so a later frame blits it back instead of rasterizing
+        // them again. Sized to the dirty rect, so dropped on any layout change
+        // (and with the device); refilled, not reallocated, when the palette
+        // flips at noon and midnight.
+        Microsoft::WRL::ComPtr<ID2D1Bitmap1> faceCache;
+        bool faceCached = false;      // faceCache holds this layout's face
+        bool faceCacheAm = false;     // in the AM palette (UsesAmPalette)
     };
     std::vector<CityVisual>      visuals_;
     std::vector<D2D1_SIZE_F>     sizes_;   // block size per city (config-level)
@@ -180,4 +191,12 @@ private:
     // based on that city's local hour; the accent brush draws the name and the
     // second hand.
     void DrawCityAnalog(ID2D1RenderTarget* rt, size_t index, bool dirtyOnly);
+    // The two halves of DrawCityAnalog, in its order: the face that only
+    // changes with the palette (fill, rim, ticks), then the hands, the hub
+    // and the text over it.
+    void DrawAnalogFace(ID2D1RenderTarget* rt, size_t index, bool am);
+    void DrawAnalogHands(ID2D1RenderTarget* rt, size_t index, bool am, bool dirtyOnly);
+    // Copy the city's dirty rect, as just drawn, into its face cache. Call
+    // with no clip pushed. Leaves the cache marked empty if it fails.
+    void RefreshFaceCache(size_t index, bool am);
 };

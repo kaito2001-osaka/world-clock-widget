@@ -85,6 +85,10 @@ bool SameDate(const LocalTimeFields& a, const LocalTimeFields& b) {
         && a.weekday == b.weekday;
 }
 
+bool UsesAmPalette(const LocalTimeFields& f) {
+    return f.valid && f.hour < 12;
+}
+
 std::wstring WidenDigits(std::wstring s, wchar_t wide) {
     for (auto& ch : s)
         if (ch >= L'0' && ch <= L'9') ch = wide;

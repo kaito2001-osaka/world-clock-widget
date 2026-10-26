@@ -329,3 +329,20 @@ TEST(same_date_and_validity) {
     CHECK(!SameDate(badA, Friday()));
     CHECK(!SameDate(Friday(), badA));
 }
+
+// ---- UsesAmPalette ------------------------------------------------------------
+
+TEST(am_palette_covers_midnight_to_just_before_noon) {
+    CHECK(UsesAmPalette(Fields(2026, 6, 12, 5, 0, 0, 0)));
+    CHECK(UsesAmPalette(Fields(2026, 6, 12, 5, 11, 59, 59)));
+}
+
+TEST(pm_palette_from_noon_to_midnight) {
+    CHECK(!UsesAmPalette(Fields(2026, 6, 12, 5, 12, 0, 0)));
+    CHECK(!UsesAmPalette(Fields(2026, 6, 12, 5, 23, 59, 59)));
+}
+
+TEST(invalid_fields_use_the_pm_palette) {
+    LocalTimeFields bad;   // hour 0, but not a real time
+    CHECK(!UsesAmPalette(bad));
+}
