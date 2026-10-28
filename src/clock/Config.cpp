@@ -77,8 +77,12 @@ bool WriteFileAtomic(const std::wstring& path, const std::string& data) {
                                FILE_ATTRIBUTE_NORMAL, nullptr);
         if (h == INVALID_HANDLE_VALUE) return false;
         DWORD written = 0;
+        // Flush before the rename: MOVEFILE_WRITE_THROUGH flushes only a
+        // copy-and-delete move, so after a crash or power cut a same-volume
+        // rename can be on disk while the temp file's data is not, leaving
+        // the real file empty or zero-filled.
         const bool ok = WriteFile(h, data.data(), (DWORD)data.size(), &written, nullptr) &&
-                        written == data.size();
+                        written == data.size() && FlushFileBuffers(h);
         CloseHandle(h);
         if (!ok) { DeleteFileW(tmp.c_str()); return false; }
     }
