@@ -137,10 +137,23 @@ public sealed class ConfigModel
     // alone; the gadget replaces through "config.json.gadget.tmp".
     public void Save()
     {
-        var json = JsonSerializer.Serialize(this, Opts);
+        var json = JsonSerializer.SerializeToUtf8Bytes(this, Opts);
         var path = ConfigPath;
         var tmp = path + ".settings.tmp";
-        File.WriteAllText(tmp, json);
+        // Flush to disk before the replace: otherwise a crash or power cut can
+        // commit the rename while the data is still cached, leaving
+        // config.json empty or zero-filled.
+        try
+        {
+            using var fs = new FileStream(tmp, FileMode.Create, FileAccess.Write, FileShare.None);
+            fs.Write(json);
+            fs.Flush(flushToDisk: true);
+        }
+        catch
+        {
+            try { File.Delete(tmp); } catch { }
+            throw;
+        }
         for (int attempt = 1; ; attempt++)
         {
             try
