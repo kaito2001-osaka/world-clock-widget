@@ -4,155 +4,157 @@
 
 # World Clock Gadget
 
-**複数のタイムゾーンをデスクトップに常駐表示する、軽量な Windows ガジェット**
+**A lightweight Windows desktop gadget that shows multiple time zones at a glance**
 
-Windows 7 のデスクトップガジェット風。半透明パネルに世界各都市の時刻を並べ、
-DST（サマータイム）も自動で正確に追従します。
+Inspired by the Windows 7 desktop gadgets: a translucent panel listing the time in
+cities around the world, with automatic and always-correct DST handling.
 
-[English](README.en.md) · [インストール](#インストール) · [使い方](#使い方) · [設定](#設定) · [ビルド](#ソースからビルドする)
+[日本語](README.ja.md) · [Install](#install) · [Usage](#usage) · [Settings](#settings) · [Build](#building-from-source)
 
-<img src="docs/digital-horizontal.png" width="620" alt="デジタル表示・横並び">
+<img src="docs/digital-horizontal.png" width="620" alt="Digital, horizontal layout">
 
 </div>
 
 ---
 
-## 特長
+## Features
 
-- 🌍 **複数都市を同時表示** — IANA タイムゾーンで管理し、**DST を自動追従**（毎tick再計算）
-- 🕘 **デジタル / アナログ** 表示 — アナログは**午前=白い文字盤 / 午後=黒い文字盤**で昼夜が一目瞭然
-- ↔️ **縦並び / 横並び** レイアウト
-- 📅 **日付の書式を自由に指定** — `2026年8月4日 (火)` から `2026-08-04` まで
-- 🪶 **軽量常駐** — 常駐プロセスは C++/Win32/Direct2D 製（exe 400KB・.NET 不要）
-- 🎨 **半透明・フレームレス** — ドラッグで移動、不透明度をスライダーで調整
-- 🪟 **覆われ得る常駐** — 既定では最前面固定にせず、タスクバー・Alt-Tab にも出ない
-- ⚙️ **Windows 11 風の設定アプリ** — Fluent デザイン、OK / キャンセル / 適用
-- 🚀 **Windows 起動時の自動開始**（管理者権限不要）
-- 🌐 **日本語 / 英語の UI** — Windows の表示言語に合わせて自動で切り替え
+- 🌍 **Multiple cities at once** — backed by IANA time zones, so **DST is always correct** (recomputed every tick)
+- 🕘 **Digital or analog** — analog faces go **light for AM, dark for PM**, so day/night reads instantly
+- ↔️ **Vertical or horizontal** layout
+- 📅 **Fully customizable date format** — from `Tue, Aug 4` to `2026-08-04`
+- 🪶 **Tiny resident footprint** — the always-on process is C++/Win32/Direct2D (400 KB exe, no .NET)
+- 🎨 **Translucent and frameless** — drag to move, adjustable opacity
+- 🪟 **Sits behind other windows** by default, and stays out of the taskbar and Alt-Tab
+- ⚙️ **Windows 11-style settings app** with Fluent design and OK / Cancel / Apply
+- 🚀 **Launch at Windows startup** (no admin rights required)
+- 🌐 **English and Japanese UI** — follows the Windows display language automatically
 
 <div align="center">
-<img src="docs/digital-vertical.png" height="300" alt="デジタル・縦並び">
+<img src="docs/digital-vertical.png" height="300" alt="Digital, vertical">
 &nbsp;&nbsp;
-<img src="docs/analog-horizontal.png" height="300" alt="アナログ・横並び">
+<img src="docs/analog-horizontal.png" height="300" alt="Analog, horizontal">
 </div>
 
 ---
 
-## インストール
+## Install
 
-### インストーラー（推奨）
+### Installer (recommended)
 
-1. **[Releases から `WorldClockGadget-Setup.exe` をダウンロード](../../releases/latest)**
-2. ダブルクリックして実行
+1. **[Download `WorldClockGadget-Setup.exe` from Releases](../../releases/latest)**
+2. Double-click to run
 
-それだけです。以下の点にご注意ください。
+That's it. Note that:
 
-- **管理者権限は不要**です（`%LOCALAPPDATA%\Programs\WorldClockGadget` にユーザー単位でインストール）
-- **.NET のインストールは不要**です（設定アプリにランタイムを同梱）
-- インストール中に「デスクトップアイコンの作成」「Windows 起動時に自動的に開始」を選べます
+- **No admin rights needed** — it installs per-user into `%LOCALAPPDATA%\Programs\WorldClockGadget`
+- **No .NET install needed** — the runtime is bundled with the settings app
+- The installer optionally creates a desktop icon and enables launch-at-startup
 
 > [!NOTE]
-> 署名されていない個人開発アプリのため、初回起動時に **Microsoft Defender SmartScreen** の
-> 警告が出ることがあります。その場合は「詳細情報」→「実行」で進めてください。
+> The app is unsigned (a personal project), so **Microsoft Defender SmartScreen** may warn you
+> on first run. Choose "More info" → "Run anyway" to continue.
 
-### 動作環境
+### Requirements
 
-| 項目 | 要件 |
+| Item | Requirement |
 |---|---|
-| OS | Windows 10 (1809+) / **Windows 11 推奨** |
-| アーキテクチャ | x64 |
-| ランタイム | **不要**（本体は依存なし・設定アプリは .NET 同梱） |
+| OS | Windows 10 (1809+) / **Windows 11 recommended** |
+| Architecture | x64 |
+| Runtime | **None** — the gadget is dependency-free and .NET ships with the settings app |
 
-> Windows 11 22H2 以降では設定アプリに Mica（すりガラス）効果が適用されます。
-> Windows 10 では通常の背景で描画されます（機能は同じ）。
+> On Windows 11 22H2+ the settings app uses the Mica backdrop. On Windows 10 it falls back to a
+> plain background; all functionality is identical.
 
-### アンインストール
+### Uninstall
 
-次のいずれからでも実行できます。
+Use any of these:
 
-1. **設定 > アプリ > インストールされているアプリ** の「World Clock Gadget」
-2. **スタートメニュー** の「World Clock Gadget をアンインストールする」
-3. インストールフォルダの `unins000.exe`
+1. **Settings > Apps > Installed apps** → "World Clock Gadget"
+2. **Start menu** → "World Clock Gadget をアンインストールする"
+3. `unins000.exe` in the install folder
 
-実行中でも自動的にアプリを終了して削除します。最後に**設定ファイルを残すか削除するか**
-確認するので、「いいえ」を選べば再インストール時に都市や表示設定がそのまま復元されます。
+The uninstaller closes the running app automatically. At the end it asks whether to also delete
+your settings — answer "No" to keep your cities and preferences for a future reinstall.
 
 ---
 
-## 使い方
+## Usage
 
-| 操作 | 動作 |
+| Action | Result |
 |---|---|
-| **ドラッグ** | ガジェットを移動（位置は自動保存され、次回起動時に復元） |
-| **右クリック** | メニュー：設定… / 常に最前面 / 位置を固定 / 終了 |
+| **Drag** | Move the gadget (position is saved and restored on next launch) |
+| **Right-click** | Menu: Settings / Always on top / Lock position / Exit |
 
-既定では**他のウィンドウに覆われる**ようになっています（Windows 7 の純正ガジェットと同じ挙動）。
-常に見えるようにしたい場合は、右クリックメニューまたは設定から「常に最前面」を有効にしてください。
+By default the gadget **can be covered by other windows**, matching the original Windows 7 gadget
+behavior. Enable "Always on top" from the right-click menu or the settings app if you want it
+permanently visible.
 
-タスクバーや Alt-Tab には表示されません。終了するには右クリック →「終了」を使います。
+It never appears in the taskbar or Alt-Tab. To close it, right-click → Exit.
 
 ---
 
-## 設定
+## Settings
 
-ガジェットを**右クリック → 「設定…」** で設定アプリが開きます。
+**Right-click the gadget → "Settings…"** to open the settings app.
 
 <div align="center">
-<img src="docs/settings.png" width="460" alt="設定アプリ">
+<img src="docs/settings.png" width="460" alt="Settings app">
 </div>
 
-### ボタンの動作
+### How the buttons work
 
-設定はファイルに保存され、ガジェットがそれを監視して即座に反映します。
-そのため「適用」＝「保存」＝「反映」が同時に起こります。
+Settings are written to disk, and the gadget watches that file and reloads instantly. So
+"apply", "save", and "take effect" all happen at the same moment.
 
-| ボタン | 動作 |
+| Button | Behavior |
 |---|---|
-| **OK** | 保存してガジェットに反映し、ウィンドウを閉じる |
-| **キャンセル** | 保存せずに閉じる（適用済みの変更は確定済み） |
-| **適用** | 保存してガジェットに反映するが、閉じない |
+| **OK** | Save, apply to the gadget, and close |
+| **Cancel** | Close without saving (already-applied changes stay applied) |
+| **Apply** | Save and apply, but keep the window open |
 
-不透明度やサイズを調整 → **適用** → 実際の見た目を確認 → 微調整、という流れで
-プレビューのように使えます。
+This makes **Apply** double as a preview: nudge the opacity or size, hit Apply, look at the real
+gadget, and fine-tune.
 
-### 設定できる項目
+### What you can configure
 
-- **都市** … 追加・削除・並べ替え。主要都市の一覧から選ぶか、IANA 名（例 `Asia/Tokyo`）を直接入力
-- **表示モード** … デジタル / アナログ
-- **並べ方** … 縦並び / 横並び
-- **12/24時間表示**、**日付・曜日の表示**、**秒の表示**
-- **日付の書式** … プリセット＋自由入力（下記）
-- **サイズ** … 小 / 中 / 大
-- **不透明度** … 10〜100%
-- **常に最前面**、**位置を固定**、**Windows 起動時に自動的に開始**
+- **Cities** — add, remove, reorder. Pick from a list of major cities, or type any IANA name (e.g. `Asia/Tokyo`)
+- **Display mode** — digital or analog
+- **Layout** — vertical or horizontal
+- **12/24-hour**, **date and weekday**, **seconds**
+- **Date format** — presets plus free-form input (see below)
+- **Size** — small / medium / large
+- **Opacity** — 10–100%
+- **Always on top**, **lock position**, **launch at Windows startup**
 
-### 日付の書式
+### Date format
 
-設定アプリのプリセットから選べるほか、独自の書式も入力できます（ライブプレビュー付き）。
+Pick a preset or write your own; the settings app previews it live.
 
-| トークン | 意味 | 例 |
+| Token | Meaning | Example |
 |---|---|---|
-| `yyyy` / `yy` | 年（4桁 / 2桁） | `2026` / `26` |
-| `MMMM` / `MMM` | 月名（英語フル / 略） | `August` / `Aug` |
-| `MM` / `M` | 月（2桁 / 数値） | `08` / `8` |
-| `dddd` / `ddd` | 曜日（英語フル / 略） | `Tuesday` / `Tue` |
-| `dd` / `d` | 日（2桁 / 数値） | `04` / `4` |
-| `aaaa` / `aaa` | 日本語の曜日 | `火曜日` / `火` |
+| `yyyy` / `yy` | Year (4- or 2-digit) | `2026` / `26` |
+| `MMMM` / `MMM` | Month name (full / short) | `August` / `Aug` |
+| `MM` / `M` | Month number (padded / plain) | `08` / `8` |
+| `dddd` / `ddd` | Weekday (full / short) | `Tuesday` / `Tue` |
+| `dd` / `d` | Day (padded / plain) | `04` / `4` |
+| `aaaa` / `aaa` | Japanese weekday | `火曜日` / `火` |
 
-上記以外の文字（`年` `月` `日` `/` `-` 空白など）はそのまま表示されます。
+Every other character passes through literally.
 
 ```
-"yyyy年M月d日 (aaa)"  →  2026年8月4日 (火)
 "ddd, MMM d"          →  Tue, Aug 4
 "yyyy-MM-dd"          →  2026-08-04
+"yyyy年M月d日 (aaa)"  →  2026年8月4日 (火)
 ```
 
-### 設定ファイルの場所
+### Config file location
 
-`%APPDATA%\WorldClockGadget\` に保存されます。手で編集しても即座に反映されます。
+Everything lives in `%APPDATA%\WorldClockGadget\`. Editing it by hand works too — changes apply
+immediately.
 
 ```jsonc
-// config.json — 設定アプリが所有
+// config.json — owned by the settings app
 {
   "cities": [
     { "label": "Tokyo",    "tz": "Asia/Tokyo" },
@@ -173,173 +175,173 @@ DST（サマータイム）も自動で正確に追従します。
 }
 ```
 
-`state.json` にはウィンドウ位置が保存されます（ガジェット本体が所有）。
+`state.json` holds the window position and is owned by the gadget itself.
 
 ---
 
-## ソースからビルドする
+## Building from source
 
-### 必要なもの
+### Prerequisites
 
-- **Visual Studio 2022 / 2026** — C++ デスクトップ開発ワークロード（MSVC v14.3x 以降、Windows SDK）
+- **Visual Studio 2022 / 2026** with the C++ desktop workload (MSVC v14.3x+, Windows SDK)
 - **[.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0)** — `winget install Microsoft.DotNet.SDK.8`
-- **[Inno Setup 6](https://jrsoftware.org/isdl.php)**（インストーラーを作る場合のみ）— `winget install JRSoftware.InnoSetup`
+- **[Inno Setup 6](https://jrsoftware.org/isdl.php)** (only to build the installer) — `winget install JRSoftware.InnoSetup`
 
-### ビルド
+### Build
 
 ```bat
 build_all.cmd
 ```
 
-`dist\` に両方の実行ファイルが並んで出力されます（この配置により、ガジェットの
-「設定…」メニューから設定アプリを起動できます）。
+Puts both executables side by side in `dist\` — that layout is what lets the gadget's
+"Settings…" menu launch the settings app.
 
 ```bat
 make_installer.cmd
 ```
 
-`dist_installer\WorldClockGadget-Setup.exe` を生成します（単一ファイル、約50MB）。
+Produces `dist_installer\WorldClockGadget-Setup.exe` (single file, ~50 MB).
 
-個別にビルドする場合:
-
-```bat
-build_clock.cmd                        REM C++ ガジェット本体のみ
-dotnet build src\settings -c Release   REM 設定アプリのみ
-```
-
-ガジェットは、VC++ 再頒布可能パッケージのない環境でも動くよう CRT を静的リンクしています。
-`build_all.cmd`・`make_installer.cmd`・`build_clock.cmd` は、ビルドしたガジェットが動的 CRT
-（`VCRUNTIME140.dll` など）を import していないことを `tools\check-static-crt.cmd` で確かめ、
-import していればエラーで止まります。
-
-### 計測（開発者向け）
-
-ガジェットは 1 秒に 1 回しか描画しないため、数分間のプロセス CPU 時間を比べても差はノイズに
-埋もれます。描画まわりの変更はベンチマークで、メモリは計測スクリプトで測ります。
+Individual targets:
 
 ```bat
-run_bench.cmd                  REM フェーズごとの所要時間の表
-run_bench.cmd --frames 300     REM 1 行あたりのフレーム数を増やす
+build_clock.cmd                        REM C++ gadget only
+dotnet build src\settings -c Release   REM settings app only
 ```
 
-`WorldClockBench` は、非表示の layered window に対して本物の Renderer を動かし、合成時刻を
-1 フレームごとに 1 秒進めて描画します。表の 1 行が 1 つの設定です（デジタル/アナログ × 縦/横 ×
-秒表示 × サイズ × DPI 96/144/192 × 4/8 都市）。各行には、描画面のサイズ、`UpdateFrame`・
-`BeginDraw`〜`GetDC`（ラスタライズを含む）・`CopyPixels`・提示（`UpdateLayeredWindow`・
-`ReleaseDC`・`EndDraw`）それぞれの中央値と p95、1 フレームあたりの `operator new` の回数、
-1 フレームあたりの CPU サイクル（全スレッドの合計 / 描画スレッドのみ）が出ます。時間は描画
-スレッドから見た所要時間なので、ほかのスレッドに任せた仕事は CPU サイクルの列にしか表れません。
-計測用のフックはベンチ用にビルドした `Renderer.cpp`（`WORLDCLOCK_BENCH`）にしかなく、製品版の
-exe には影響しません。
+The gadget links the CRT statically so that it runs without the VC++ redistributable.
+`build_all.cmd`, `make_installer.cmd` and `build_clock.cmd` check with `tools\check-static-crt.cmd`
+that the built gadget imports no dynamic CRT DLL (`VCRUNTIME140.dll` and the like), and fail if it does.
 
-**ゴールデンバッファ** — 描画系の変更では、出力が変わってはいけません。ベンチは、固定の時刻と
-設定で描いたバッファ（アルファを含む事前乗算 BGRA。`UpdateLayeredWindow` に渡すものそのもの）を
-保存し、バイト単位で比較します。出力はインストール済みのフォントや DirectWrite に依存するため、
-ゴールデンはリポジトリに入れません。`main` で生成し、作業ブランチで比較します。
+### Measuring (for developers)
+
+The gadget draws once a second, so comparing its process CPU time over a few minutes is noise.
+Render-path changes are measured with the benchmark, and memory with the footprint script.
+
+```bat
+run_bench.cmd                  REM per-phase timing table
+run_bench.cmd --frames 300     REM more frames per row
+```
+
+`WorldClockBench` drives the real renderer against a hidden layered window with synthetic time,
+1 s per frame. Each row is one configuration (digital/analog × vertical/horizontal × seconds ×
+size × DPI 96/144/192 × 4/8 cities). It prints the surface size, the median and p95 of
+`UpdateFrame`, `BeginDraw`…`GetDC` (rasterization included), `CopyPixels` and the present
+(`UpdateLayeredWindow`, `ReleaseDC`, `EndDraw`), the `operator new` calls per frame, and the CPU
+cycles per frame (all threads / the render thread only). The times are as the render thread sees
+them, so work handed to other threads shows only in the cycles. The timing hooks exist only in
+the benchmark's own build of `Renderer.cpp` (`WORLDCLOCK_BENCH`); the product exe is unaffected.
+
+**Golden buffers** — rendering changes must not change the output. The benchmark saves the
+presented buffer (premultiplied BGRA, alpha included) for a fixed time and set of configurations,
+and compares it byte for byte. Output depends on the installed fonts and DirectWrite, so goldens
+are not committed: generate them on `main`, then check on your branch.
 
 ```bat
 git checkout main
-run_bench.cmd --write-golden   REM build\golden\*.bgra に保存
-git checkout <作業ブランチ>
-run_bench.cmd --check-golden   REM 不一致なら終了コード 1、*.actual.bgra を出力
+run_bench.cmd --write-golden   REM writes build\golden\*.bgra
+git checkout <your-branch>
+run_bench.cmd --check-golden   REM exit code 1 and *.actual.bgra on a mismatch
 ```
 
-**差分描画の検査** — 通常のフレームでは、各都市の時刻の行（アナログでは盤面）だけを描き直します。
-`run_bench.cmd --check-incremental` は、ゴールデンと同じ設定ごとに、差分で描くものと毎フレーム
-全面を描くものを並べて動かし、毎フレームのバッファをバイト単位で比べます。時刻は、日付の
-変わり目、正午、数日後への跳躍、時刻の巻き戻しをまたぎます。ゴールデンは不要です。不一致があれば
-終了コード 1 で終わり、両方のフレームを `build\golden` に `*.incremental.bgra` / `*.full.bgra`
-として出力します。
+**Incremental redraw check** — a steady-state frame repaints only each city's clock line (or
+face). `run_bench.cmd --check-incremental` runs, for each golden configuration, one renderer
+drawing incrementally next to one forced to redraw everything, and compares the buffers byte for
+byte after every frame. The synthetic time crosses midnight and noon, jumps days ahead and goes
+back an hour. It needs no goldens. On a mismatch it exits with 1 and writes both frames to
+`build\golden` as `*.incremental.bgra` / `*.full.bgra`.
 
-**常駐時のフットプリント** — ガジェットを起動して 5 分置き、1 分おきに 3 回採取して、
-中央値を比べます。
+**Resident footprint** — start the gadget, leave it for 5 minutes, then take 3 samples one minute
+apart and compare the medians.
 
 ```powershell
-.\tools\measure-footprint.ps1             # Private / ワーキングセット / スレッド / ハンドル / CPU ms/s
-.\tools\measure-footprint.ps1 -Modules    # ロード済み DLL の一覧も出す
+.\tools\measure-footprint.ps1             # private bytes, working set, threads, handles, CPU ms/s
+.\tools\measure-footprint.ps1 -Modules    # plus the loaded DLLs
 ```
 
 ---
 
-## アーキテクチャ
+## Architecture
 
-**意図的に2プロセス構成**を採っています。これは本プロジェクトの中核的な設計判断です。
+The project is **deliberately split into two processes**. This is its central design decision.
 
-| コンポーネント | 技術 | 役割 | 常駐 |
+| Component | Stack | Role | Resident |
 |---|---|---|---|
-| **WorldClockGadget** | C++20 / Win32 / Direct2D / DirectWrite | 時計を描画して常駐する唯一のプロセス | ○ |
-| **WorldClockSettings** | C# / .NET 8 / WPF + [WPF-UI](https://github.com/lepoco/wpfui) | 設定を編集。閉じたら終了 | × |
+| **WorldClockGadget** | C++20 / Win32 / Direct2D / DirectWrite | The only always-running process; draws the clocks | Yes |
+| **WorldClockSettings** | C# / .NET 8 / WPF + [WPF-UI](https://github.com/lepoco/wpfui) | Edits settings on demand, exits when closed | No |
 
-### なぜ分けるのか
+### Why split it
 
-「常時の消費を最小に」と「Windows 11 設定アプリ級のモダンな見た目」は、
-同一フレームワーク内では両立しません。前者は生の C++/Win32 を、後者は WinUI/Fluent 系を要求します。
+"Minimal always-on resource usage" and "a modern Windows 11 Settings-grade look" cannot be
+satisfied by one framework: the first demands raw C++/Win32, the second demands WinUI/Fluent.
 
-常駐するのは本体だけなので、**本体を軽量な C++ に保ち、モダンな UI は「たまに開く別プロセス」に
-隔離する**ことで両立させています。設定アプリは開いている間だけ数十MBを使いますが、
-それは常駐コストには乗りません。
+Since only the gadget is resident, keeping **the gadget lean in C++ and isolating the modern UI in
+a separate, occasionally-opened process** satisfies both. The settings app costs tens of megabytes
+only while it is open — never as a standing cost.
 
-### プロセス間の連携
+### How the processes talk
 
-高速な IPC は持たず、**ファイル経由**で連携します。
-
-```
-設定アプリ ──書き込み──> config.json ──ファイル監視──> ガジェット本体（再読込・即反映）
-ガジェット本体 ──書き込み──> state.json（ウィンドウ位置）
-```
-
-書き手が競合しないよう、**ファイルを役割で分離**しています（`config.json` は設定アプリが、
-`state.json` は本体が所有）。設定アプリは一時ファイル経由の**アトミックな書き込み**を行い、
-本体は `ReadDirectoryChangesW` で変更を検知します。
-
-### 実装上のポイント
-
-- **半透明・丸角・滑らかな縁** — Direct2D で **GDI 互換の事前乗算 BGRA ビットマップ**に描画し、
-  その DC を `UpdateLayeredWindow` に渡して per-pixel alpha 合成。
-  （`ID2D1DCRenderTarget` だと**アルファが失われて全透明になる**ため使っていません）
-- **ソフトウェア描画のスレッド** — Direct3D 11 の WARP デバイスを自前で作り、
-  `D3D11_CREATE_DEVICE_SINGLETHREADED | D3D11_CREATE_DEVICE_PREVENT_INTERNAL_THREADING_OPTIMIZATIONS`
-  で WARP のワーカースレッドを止めています。1 秒に 1 回の描画のために常駐していた十本前後の
-  スレッドとそのメモリがなくなり、1 フレームの CPU サイクルも減ります
-- **DST の正確性** — 固定オフセットを持たず、IANA 識別子と C++20 `std::chrono::zoned_time` で
-  **毎tick UTC から再計算**。これにより DST 切替も自動的に正しくなります
-- **レイアウトの安定性** — テキスト幅は「最も広い数字」で測定するため、
-  秒が進んでもパネル幅がガタつきません
-- **Per-Monitor DPI v2** — 本体・設定アプリとも対応
-- **更新間隔** — 既定は分単位（`showSeconds` が真のときのみ毎秒）で CPU 負荷を最小化
-- **静的CRT リンク** — 動的CRT だと配布先に VC++ 再頒布可能パッケージ（**管理者権限が必要**）が
-  要るため、`/MT` で静的リンクして依存をなくしています
-
-### プロジェクト構成
+There is no fast IPC. They communicate **through files**:
 
 ```
-src/clock/                  C++ ガジェット本体
-  main.cpp                    エントリポイント（wWinMain のみ）
-  GadgetWindow.{hpp,cpp}      ウィンドウ・メニュー・ドラッグ・タイマー・ファイル監視
-  Renderer.{hpp,cpp}          Direct2D 描画（デジタル / アナログ）
-  TimeEngine.{hpp,cpp}        IANA タイムゾーン / DST 計算
-  Config.{hpp,cpp}            config.json / state.json の読み書き
-  Startup.{hpp,cpp}           自動起動の登録・解除
-  json.hpp                    依存なしの最小 JSON パーサ
-  bench/                      描画ベンチマークとゴールデンバッファ（run_bench.cmd）
-src/settings/               C# WPF 設定アプリ
-tools/                      開発用スクリプト（常駐時のフットプリント計測、静的 CRT の確認）
-installer/                  Inno Setup スクリプト
-icons/                      アプリアイコン
+Settings app ──writes──> config.json ──file watch──> Gadget (reloads, applies instantly)
+Gadget ──writes──> state.json (window position)
+```
+
+The files are **split by owner** so the two writers never conflict (`config.json` belongs to the
+settings app, `state.json` to the gadget). Writes are **atomic** via a temp file plus rename, and
+the gadget watches the directory with `ReadDirectoryChangesW`.
+
+### Implementation notes
+
+- **Translucency, rounded corners, clean edges** — Direct2D renders into a **GDI-compatible
+  premultiplied-BGRA bitmap**, whose DC is handed to `UpdateLayeredWindow` for true per-pixel alpha.
+  (`ID2D1DCRenderTarget` **drops the alpha channel**, which renders the window fully transparent,
+  so it is not used.)
+- **Software rendering threads** — the renderer creates its own Direct3D 11 WARP device with
+  `D3D11_CREATE_DEVICE_SINGLETHREADED | D3D11_CREATE_DEVICE_PREVENT_INTERNAL_THREADING_OPTIMIZATIONS`,
+  which turns off WARP's worker threads. The ten or so threads that stayed resident to draw once a
+  second, and their memory, are gone, and a frame takes fewer CPU cycles.
+- **DST correctness** — no cached UTC offsets. Cities are stored as IANA identifiers and
+  recomputed from UTC **every tick** with C++20 `std::chrono::zoned_time`, so DST transitions are
+  handled automatically.
+- **Stable layout** — text is measured using the widest digit glyph, so the panel does not jitter
+  as the seconds tick over.
+- **Per-Monitor DPI v2** in both processes.
+- **Update cadence** — minute resolution by default, per-second only when seconds are shown.
+- **Statically linked CRT** — a dynamic CRT would require the VC++ redistributable (which **needs
+  admin rights**) on target machines, so the gadget links `/MT` and ships dependency-free.
+
+### Project layout
+
+```
+src/clock/                  C++ gadget
+  main.cpp                    entry point (wWinMain only)
+  GadgetWindow.{hpp,cpp}      window, menu, dragging, timer, file watching
+  Renderer.{hpp,cpp}          Direct2D rendering (digital / analog)
+  TimeEngine.{hpp,cpp}        IANA time zone / DST computation
+  Config.{hpp,cpp}            config.json / state.json I/O
+  Startup.{hpp,cpp}           launch-at-startup registration
+  json.hpp                    minimal dependency-free JSON parser
+  bench/                      render benchmark and golden buffers (run_bench.cmd)
+src/settings/               C# WPF settings app
+tools/                      developer scripts (resident footprint measurement, static CRT check)
+installer/                  Inno Setup script
+icons/                      application icons
 ```
 
 ---
 
-## 今後の予定
+## Roadmap
 
-必要に応じて追加を検討している機能です。
+Possible future additions:
 
-- [ ] 色・テーマのカスタマイズ（現在は「暗い半透明＋明色テキスト」の1テーマ）
-- [ ] ガジェットの複数インスタンス（現在は1パネルに複数都市）
-- [ ] 設定の「元に戻す」（開いた時点のスナップショットに戻す）
+- [ ] Custom colors and themes (currently a single dark translucent theme)
+- [ ] Multiple gadget instances (currently one panel with many cities)
+- [ ] "Revert" in the settings app (restore the snapshot taken when it opened)
 
-## ライセンス
+## License
 
 [MIT License](LICENSE) © 2026 Kaito Ito
 
-アイコンは [Claude](https://claude.ai) Design により作成されました。
+Icon designed with [Claude](https://claude.ai) Design.
