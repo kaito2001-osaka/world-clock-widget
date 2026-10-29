@@ -1,10 +1,17 @@
-// Tests for UTC -> IANA-zone local time conversion (TimeEngine.hpp).
+// Tests for UTC -> local time conversion (TimeEngine.hpp, WindowsZoneMap.hpp).
 //
 // Every case pins a fixed UTC instant so the expectations are stable forever.
 #include "test_framework.hpp"
 #include "TimeEngine.hpp"
+#include "WindowsZoneMap.hpp"
+
+#include <windows.h>
 
 #include <chrono>
+#include <cstdio>
+#include <map>
+#include <set>
+#include <string>
 
 using namespace std::chrono;
 
@@ -15,6 +22,10 @@ system_clock::time_point Utc(int y, unsigned mo, unsigned d, int h, int mi, int 
     auto date = sys_days{ year{ y } / month{ mo } / day{ d } };
     return system_clock::time_point{ date.time_since_epoch() }
          + hours{ h } + minutes{ mi } + seconds{ s };
+}
+
+sys_seconds UtcS(int y, unsigned mo, unsigned d, int h, int mi, int s) {
+    return floor<seconds>(Utc(y, mo, d, h, mi, s));
 }
 
 // Compact assertion: the local wall clock in `tz` at `utc`.
@@ -31,11 +42,6 @@ void ExpectLocal(const char* tz, system_clock::time_point utc,
 }
 
 } // namespace
-
-TEST(tz_database_is_available) {
-    // Everything else here is meaningless without it.
-    CHECK(TzDatabaseAvailable());
-}
 
 TEST(compute_local_basic_offsets) {
     auto t = Utc(2026, 1, 15, 0, 0, 0);   // 2026-01-15T00:00:00Z
@@ -73,6 +79,17 @@ TEST(compute_local_london_summer_time) {
     ExpectLocal("Europe/London", Utc(2026, 7, 15, 12, 0, 0), 2026, 7, 15, 13, 0);
 }
 
+TEST(compute_local_zones_whose_rules_changed_after_2022) {
+    // #49: ICU's tz 2022g had these an hour off. The values are the real ones
+    // (and the taskbar clock's) at 2026-10-23 11:37Z.
+    auto t = Utc(2026, 10, 23, 11, 37, 0);
+    ExpectLocal("Africa/Cairo", t, 2026, 10, 23, 14, 37);        // +03:00, DST again since 2023
+    ExpectLocal("America/Nuuk", t, 2026, 10, 23, 10, 37);        // -01:00, DST since 2024
+    ExpectLocal("Asia/Almaty", t, 2026, 10, 23, 16, 37);         // +05:00 since 2024-03-01
+    ExpectLocal("America/Coyhaique", t, 2026, 10, 23, 8, 37);    // -03:00, new in 2025
+    ExpectLocal("Asia/Tokyo", t, 2026, 10, 23, 20, 37);
+}
+
 TEST(compute_local_seconds_are_carried_through) {
     LocalTimeFields f = ComputeLocal("Asia/Tokyo", Utc(2026, 6, 12, 0, 5, 37));
     CHECK(f.valid);
@@ -99,6 +116,10 @@ TEST(compute_local_month_and_day_are_one_based) {
 TEST(compute_local_rejects_unknown_zone) {
     CHECK_EQ(ComputeLocal("Not/AZone", Utc(2026, 1, 15, 0, 0, 0)).valid, false);
     CHECK_EQ(ComputeLocal("", Utc(2026, 1, 15, 0, 0, 0)).valid, false);
+    // Names are matched exactly, as config.json stores them.
+    CHECK_EQ(ComputeLocal("asia/tokyo", Utc(2026, 1, 15, 0, 0, 0)).valid, false);
+    // A Windows id is not an IANA id.
+    CHECK_EQ(ComputeLocal("Tokyo Standard Time", Utc(2026, 1, 15, 0, 0, 0)).valid, false);
 }
 
 TEST(compute_local_is_repeatable) {
@@ -123,38 +144,237 @@ TEST(compute_local_does_not_mix_up_zones) {
     }
 }
 
-// ---- offset cache equivalence ---------------------------------------------
-// ZoneClock caches a zone's UTC offset and the window it holds for, so the
-// steady state costs no tzdb lookup at all. The risk is a stale offset across
-// a DST transition, which no one would notice by eye for months -- so these
-// compare the cached path (and ComputeLocal) against a freshly computed
-// reference.
+// ---- OffsetInYear --------------------------------------------------------------
+// The transition arithmetic on hand-built rules, the way Windows writes them in
+// TIME_ZONE_INFORMATION, so these hold whatever the registry says.
 
 namespace {
 
-// The uncached reference: resolve the zone and convert from scratch each time.
+TzTransition Nth(int mo, int dow, int week, int h, int mi = 0, int s = 0, int ms = 0) {
+    return { 0, mo, dow, week, h, mi, s, ms };
+}
+
+TzYearRule Rule(int bias, int daylightBias, TzTransition standardDate, TzTransition daylightDate) {
+    return { bias, 0, daylightBias, standardDate, daylightDate };
+}
+
+// US Eastern: DST from the 2nd Sunday of March 02:00 to the 1st Sunday of
+// November 02:00.
+const TzYearRule kEastern = Rule(300, -60, Nth(11, 0, 1, 2), Nth(3, 0, 2, 2));
+
+void ExpectSpan(const OffsetSpan& s, minutes offset, sys_seconds begin, sys_seconds end) {
+    CHECK_EQ(s.offset.count(), seconds{ offset }.count());
+    CHECK_EQ(s.begin.time_since_epoch().count(), begin.time_since_epoch().count());
+    CHECK_EQ(s.end.time_since_epoch().count(), end.time_since_epoch().count());
+}
+
+} // namespace
+
+TEST(offset_northern_dst_and_its_spans) {
+    // The year runs from local (standard) midnight: 05:00Z.
+    const sys_seconds jan1 = UtcS(2026, 1, 1, 5, 0, 0), next = UtcS(2027, 1, 1, 5, 0, 0);
+    const sys_seconds spring = UtcS(2026, 3, 8, 7, 0, 0), fall = UtcS(2026, 11, 1, 6, 0, 0);
+    ExpectSpan(OffsetInYear(kEastern, 2026, jan1), -5h, jan1, spring);
+    ExpectSpan(OffsetInYear(kEastern, 2026, spring - 1s), -5h, jan1, spring);
+    ExpectSpan(OffsetInYear(kEastern, 2026, spring), -4h, spring, fall);
+    ExpectSpan(OffsetInYear(kEastern, 2026, fall - 1s), -4h, spring, fall);
+    ExpectSpan(OffsetInYear(kEastern, 2026, fall), -5h, fall, next);
+    ExpectSpan(OffsetInYear(kEastern, 2026, next - 1s), -5h, fall, next);
+}
+
+TEST(offset_southern_dst_spans_the_new_year) {
+    // Sydney: +10, DST (+11) from the 1st Sunday of October 02:00 to the 1st
+    // Sunday of April 03:00. In 2026: ends 04-04 16:00Z, starts 10-03 16:00Z.
+    const TzYearRule sydney = Rule(-600, -60, Nth(4, 0, 1, 3), Nth(10, 0, 1, 2));
+    const sys_seconds jan1 = UtcS(2025, 12, 31, 14, 0, 0), next = UtcS(2026, 12, 31, 14, 0, 0);
+    const sys_seconds end = UtcS(2026, 4, 4, 16, 0, 0), start = UtcS(2026, 10, 3, 16, 0, 0);
+    ExpectSpan(OffsetInYear(sydney, 2026, UtcS(2026, 1, 15, 0, 0, 0)), 11h, jan1, end);
+    ExpectSpan(OffsetInYear(sydney, 2026, end - 1s), 11h, jan1, end);
+    ExpectSpan(OffsetInYear(sydney, 2026, end), 10h, end, start);
+    ExpectSpan(OffsetInYear(sydney, 2026, start), 11h, start, next);
+}
+
+TEST(offset_half_hour_daylight_bias) {
+    // Lord Howe: +10:30, DST adds only 30 minutes. Starts 2026-10-04 02:00
+    // local (10-03 15:30Z), ends 2026-04-05 02:00 local daylight (04-04 15:00Z).
+    const TzYearRule lordHowe = Rule(-630, -30, Nth(4, 0, 1, 2), Nth(10, 0, 1, 2));
+    const sys_seconds end = UtcS(2026, 4, 4, 15, 0, 0), start = UtcS(2026, 10, 3, 15, 30, 0);
+    CHECK_EQ(OffsetInYear(lordHowe, 2026, end - 1s).offset.count(), (11h).count() * 3600);
+    CHECK_EQ(OffsetInYear(lordHowe, 2026, end).offset.count(), (10h + 30min).count() * 60);
+    CHECK_EQ(OffsetInYear(lordHowe, 2026, start - 1s).offset.count(), (10h + 30min).count() * 60);
+    CHECK_EQ(OffsetInYear(lordHowe, 2026, start).offset.count(), (11h).count() * 3600);
+}
+
+TEST(offset_cairo_2026_ends_at_23_59_59_999) {
+    // Egypt's 2026 rule as Windows stores it: DST from the last Friday of
+    // April 00:00 (04-24, so 04-23 22:00Z) to the last Thursday of October
+    // 23:59:59.999 (10-29, so 10-29 20:59:59.999Z, shown from 21:00:00Z).
+    const TzYearRule cairo = Rule(-120, -60, Nth(10, 4, 5, 23, 59, 59, 999), Nth(4, 5, 5, 0));
+    const sys_seconds start = UtcS(2026, 4, 23, 22, 0, 0), end = UtcS(2026, 10, 29, 21, 0, 0);
+    ExpectSpan(OffsetInYear(cairo, 2026, UtcS(2026, 10, 23, 11, 37, 0)), 3h, start, end);
+    ExpectSpan(OffsetInYear(cairo, 2026, end - 1s), 3h, start, end);
+    ExpectSpan(OffsetInYear(cairo, 2026, end), 2h, end, UtcS(2026, 12, 31, 22, 0, 0));
+    ExpectSpan(OffsetInYear(cairo, 2026, start - 1s), 2h, UtcS(2025, 12, 31, 22, 0, 0), start);
+}
+
+TEST(offset_last_week_in_a_month_with_four_or_five) {
+    // London: last Sunday of March 01:00 GMT, last Sunday of October 02:00 BST.
+    // March 2026 has five Sundays (the 29th), October four (the 25th).
+    const TzYearRule london = Rule(0, -60, Nth(10, 0, 5, 2), Nth(3, 0, 5, 1));
+    const sys_seconds start = UtcS(2026, 3, 29, 1, 0, 0), end = UtcS(2026, 10, 25, 1, 0, 0);
+    ExpectSpan(OffsetInYear(london, 2026, UtcS(2026, 7, 15, 12, 0, 0)), 1h, start, end);
+}
+
+TEST(offset_without_dst_covers_the_whole_year) {
+    const TzYearRule tokyo = Rule(-540, 0, {}, {});
+    ExpectSpan(OffsetInYear(tokyo, 2026, UtcS(2026, 6, 1, 0, 0, 0)), 9h,
+               UtcS(2025, 12, 31, 15, 0, 0), UtcS(2026, 12, 31, 15, 0, 0));
+    // Standard bias counts too, though Windows leaves it at 0 in practice.
+    TzYearRule shifted = tokyo;
+    shifted.standardBias = -60;
+    CHECK_EQ(OffsetInYear(shifted, 2026, UtcS(2026, 6, 1, 0, 0, 0)).offset.count(), (10h).count() * 3600);
+}
+
+TEST(offset_fixed_date_rules) {
+    // wYear != 0: the month and day are a date, not "the n-th weekday".
+    TzYearRule fixed = Rule(0, -60, { 2026, 9, 0, 20, 2, 0, 0, 0 }, { 2026, 3, 0, 15, 1, 0, 0, 0 });
+    const sys_seconds start = UtcS(2026, 3, 15, 1, 0, 0), end = UtcS(2026, 9, 20, 1, 0, 0);
+    ExpectSpan(OffsetInYear(fixed, 2026, UtcS(2026, 6, 1, 0, 0, 0)), 1h, start, end);
+}
+
+TEST(offset_ignores_malformed_rules) {
+    // A month or week Windows never writes must not walk off the calendar.
+    TzYearRule bad = kEastern;
+    bad.daylightDate.month = 13;
+    CHECK_EQ(OffsetInYear(bad, 2026, UtcS(2026, 7, 1, 0, 0, 0)).offset.count(), (-5h).count() * 3600);
+    bad = kEastern;
+    bad.standardDate.dayOfWeek = 9;
+    CHECK_EQ(OffsetInYear(bad, 2026, UtcS(2026, 7, 1, 0, 0, 0)).offset.count(), (-5h).count() * 3600);
+}
+
+TEST(offset_switch_to_permanent_dst) {
+    // British Columbia's 2026 rule as Windows stores it: DST "ends" on the
+    // first Thursday of January 00:00 (2026-01-01) and starts on the second
+    // Sunday of March, so from 03-08 10:00Z the zone stays at -07:00 for good.
+    const TzYearRule bc = Rule(480, -60, Nth(1, 4, 1, 0), Nth(3, 0, 2, 2));
+    const sys_seconds jan1 = UtcS(2026, 1, 1, 8, 0, 0), start = UtcS(2026, 3, 8, 10, 0, 0);
+    ExpectSpan(OffsetInYear(bc, 2026, jan1), -8h, jan1, start);
+    ExpectSpan(OffsetInYear(bc, 2026, start), -7h, start, UtcS(2027, 1, 1, 8, 0, 0));
+}
+
+TEST(rule_year_is_the_local_standard_year) {
+    // West of UTC the new UTC year comes first: until local midnight the old
+    // year's rules still hold.
+    const TzYearRule pacific = Rule(480, -60, Nth(11, 0, 1, 2), Nth(3, 0, 2, 2));
+    RuleYearSpan r = RuleYearAt(pacific, UtcS(2026, 1, 1, 3, 0, 0));
+    CHECK_EQ(r.year, 2025);
+    CHECK_EQ(r.begin.time_since_epoch().count(), UtcS(2026, 1, 1, 0, 0, 0).time_since_epoch().count());
+    CHECK_EQ(r.end.time_since_epoch().count(), UtcS(2026, 1, 1, 8, 0, 0).time_since_epoch().count());
+    r = RuleYearAt(pacific, UtcS(2026, 1, 1, 8, 0, 0));
+    CHECK_EQ(r.year, 2026);
+    CHECK_EQ(r.end.time_since_epoch().count(), UtcS(2027, 1, 1, 0, 0, 0).time_since_epoch().count());
+
+    // East of UTC the local new year comes first, inside the old UTC year.
+    const TzYearRule tokyo = Rule(-540, 0, {}, {});
+    r = RuleYearAt(tokyo, UtcS(2026, 12, 31, 16, 0, 0));
+    CHECK_EQ(r.year, 2027);
+    CHECK_EQ(r.begin.time_since_epoch().count(), UtcS(2026, 12, 31, 15, 0, 0).time_since_epoch().count());
+    CHECK_EQ(r.end.time_since_epoch().count(), UtcS(2027, 1, 1, 0, 0, 0).time_since_epoch().count());
+    r = RuleYearAt(tokyo, UtcS(2026, 6, 1, 0, 0, 0));
+    CHECK_EQ(r.year, 2026);
+
+    // At UTC+0 the two years coincide.
+    const TzYearRule utc = Rule(0, 0, {}, {});
+    r = RuleYearAt(utc, UtcS(2026, 6, 1, 0, 0, 0));
+    CHECK_EQ(r.year, 2026);
+    CHECK_EQ(r.begin.time_since_epoch().count(), UtcS(2026, 1, 1, 0, 0, 0).time_since_epoch().count());
+    CHECK_EQ(r.end.time_since_epoch().count(), UtcS(2027, 1, 1, 0, 0, 0).time_since_epoch().count());
+}
+
+// ---- WindowsZoneMap ------------------------------------------------------------
+
+namespace {
+std::wstring MapOf(const char* iana) {
+    const wchar_t* id = WindowsZoneId(iana);
+    return id ? id : L"(none)";
+}
+} // namespace
+
+TEST(zone_map_resolves_names_and_aliases) {
+    CHECK_EQ(MapOf("Africa/Cairo"), std::wstring(L"Egypt Standard Time"));
+    CHECK_EQ(MapOf("Asia/Tokyo"), std::wstring(L"Tokyo Standard Time"));
+    CHECK_EQ(MapOf("Etc/UTC"), std::wstring(L"UTC"));
+    // CLDR keys some zones by their old names; both spellings resolve.
+    CHECK_EQ(MapOf("Asia/Kolkata"), std::wstring(L"India Standard Time"));
+    CHECK_EQ(MapOf("Asia/Calcutta"), std::wstring(L"India Standard Time"));
+    CHECK_EQ(MapOf("America/Nuuk"), std::wstring(L"Greenland Standard Time"));
+    CHECK_EQ(MapOf("America/Godthab"), std::wstring(L"Greenland Standard Time"));
+}
+
+TEST(zone_map_rejects_unknown_names) {
+    CHECK(WindowsZoneId("Not/AZone") == nullptr);
+    CHECK(WindowsZoneId("") == nullptr);
+    CHECK(WindowsZoneId("asia/tokyo") == nullptr);
+    CHECK(WindowsZoneId("Tokyo Standard Time") == nullptr);
+    // Neighbours of real entries in the sorted table.
+    CHECK(WindowsZoneId("Asia/Tokyo ") == nullptr);
+    CHECK(WindowsZoneId("Asia/Toky") == nullptr);
+}
+
+TEST(zone_map_is_sorted_for_binary_search) {
+    auto all = AllWindowsZones();
+    CHECK(all.size() > 400);
+    for (size_t i = 1; i < all.size(); ++i)
+        CHECK(all[i - 1].iana < all[i].iana);
+    for (const WindowsZoneEntry& e : all)
+        CHECK(WindowsZoneId(e.iana) == e.windows);
+}
+
+// ---- against Windows' own conversion ---------------------------------------------
+// SystemTimeToTzSpecificLocalTimeEx is what the taskbar clock shows, so it is
+// the reference: the cached path, ComputeLocal and ZoneClock alike, must match
+// it at every instant, across transitions and new years, for every zone.
+
+namespace {
+
+const DYNAMIC_TIME_ZONE_INFORMATION* WindowsZone(const wchar_t* id) {
+    static std::map<std::wstring, DYNAMIC_TIME_ZONE_INFORMATION> zones = [] {
+        std::map<std::wstring, DYNAMIC_TIME_ZONE_INFORMATION> m;
+        DYNAMIC_TIME_ZONE_INFORMATION z{};
+        for (DWORD i = 0; EnumDynamicTimeZoneInformation(i, &z) == ERROR_SUCCESS; ++i)
+            m[z.TimeZoneKeyName] = z;
+        return m;
+    }();
+    auto it = zones.find(id);
+    return it == zones.end() ? nullptr : &it->second;
+}
+
 LocalTimeFields Reference(const char* tz, system_clock::time_point utc) {
     LocalTimeFields f;
-    try {
-        const time_zone* z = locate_zone(tz);
-        if (!z) return f;
-        zoned_time zt{ z, utc };
-        local_time<system_clock::duration> lt = zt.get_local_time();
-        auto dp = floor<days>(lt);
-        year_month_day ymd{ dp };
-        weekday wd{ dp };
-        hh_mm_ss hms{ lt - dp };
-        f.valid = true;
-        f.year = int(ymd.year());
-        f.month = unsigned(ymd.month());
-        f.day = unsigned(ymd.day());
-        f.weekday = wd.c_encoding();
-        f.hour = int(hms.hours().count());
-        f.minute = int(hms.minutes().count());
-        f.second = int(hms.seconds().count());
-    } catch (...) {
-        f.valid = false;
-    }
+    const wchar_t* id = WindowsZoneId(tz);
+    const DYNAMIC_TIME_ZONE_INFORMATION* zone = id ? WindowsZone(id) : nullptr;
+    if (!zone) return f;
+    const sys_days date = floor<days>(utc);
+    const year_month_day ymd{ date };
+    const hh_mm_ss hms{ floor<seconds>(utc - date) };
+    SYSTEMTIME u{};
+    u.wYear   = WORD(int(ymd.year()));
+    u.wMonth  = WORD(unsigned(ymd.month()));
+    u.wDay    = WORD(unsigned(ymd.day()));
+    u.wHour   = WORD(hms.hours().count());
+    u.wMinute = WORD(hms.minutes().count());
+    u.wSecond = WORD(hms.seconds().count());
+    SYSTEMTIME l{};
+    if (!SystemTimeToTzSpecificLocalTimeEx(zone, &u, &l)) return f;
+    const sys_days localDate{ year{ l.wYear } / month{ l.wMonth } / day{ l.wDay } };
+    f.valid   = true;
+    f.year    = l.wYear;
+    f.month   = l.wMonth;
+    f.day     = l.wDay;
+    f.weekday = weekday{ localDate }.c_encoding();
+    f.hour    = l.wHour;
+    f.minute  = l.wMinute;
+    f.second  = l.wSecond;
     return f;
 }
 
@@ -164,62 +384,72 @@ bool SameFields(const LocalTimeFields& a, const LocalTimeFields& b) {
            a.minute == b.minute && a.second == b.second;
 }
 
-// Step second by second across a window and compare both paths.
+// Names the zone and instant on a mismatch; a bare CHECK in a sweep would not.
+void CheckMatches(const char* tz, system_clock::time_point t, const LocalTimeFields& got) {
+    ::t::CountCheck();
+    const LocalTimeFields want = Reference(tz, t);
+    if (SameFields(got, want)) return;
+    auto show = [](const LocalTimeFields& f) {
+        if (!f.valid) return std::string("invalid");
+        char buf[64];
+        snprintf(buf, sizeof buf, "%04d-%02u-%02u %02d:%02d:%02d", f.year, f.month, f.day,
+                 f.hour, f.minute, f.second);
+        return std::string(buf);
+    };
+    const sys_seconds s = floor<seconds>(t);
+    ::t::Fail("matches SystemTimeToTzSpecificLocalTimeEx", __FILE__, __LINE__,
+              std::string("  zone: ") + tz + " at unix " + std::to_string(s.time_since_epoch().count()) +
+              "\n  actual:   " + show(got) + "\n  expected: " + show(want));
+}
+
+// Step through a window and compare ComputeLocal with Windows.
 void SweepAgainstReference(const char* tz, system_clock::time_point from,
                            system_clock::time_point to, seconds step) {
     for (auto t = from; t < to; t += step)
-        CHECK(SameFields(ComputeLocal(tz, t), Reference(tz, t)));
+        CheckMatches(tz, t, ComputeLocal(tz, t));
+}
+
+// The same with one ZoneClock, stepping through time the way the renderer
+// does, so the cached offset is actually reused (and has to be dropped).
+void SweepClockAgainstReference(const char* tz, system_clock::time_point from,
+                                system_clock::time_point to, seconds step) {
+    ZoneClock clock{ tz };
+    for (auto t = from; t < to; t += step)
+        CheckMatches(tz, t, clock.At(t));
 }
 
 } // namespace
 
-TEST(cache_matches_reference_across_us_spring_forward) {
+TEST(compute_local_matches_windows_across_us_spring_forward) {
     // 2026-03-08 07:00Z: 02:00 EST becomes 03:00 EDT.
     SweepAgainstReference("America/New_York",
                           Utc(2026, 3, 8, 6, 58, 0), Utc(2026, 3, 8, 7, 2, 0), seconds{ 1 });
 }
 
-TEST(cache_matches_reference_across_us_fall_back) {
+TEST(compute_local_matches_windows_across_us_fall_back) {
     // 2026-11-01 06:00Z: 02:00 EDT becomes 01:00 EST.
     SweepAgainstReference("America/New_York",
                           Utc(2026, 11, 1, 5, 58, 0), Utc(2026, 11, 1, 6, 2, 0), seconds{ 1 });
 }
 
-TEST(cache_matches_reference_across_southern_transition) {
+TEST(compute_local_matches_windows_across_southern_transition) {
     // Sydney leaves DST on 2026-04-05.
     SweepAgainstReference("Australia/Sydney",
                           Utc(2026, 4, 4, 15, 58, 0), Utc(2026, 4, 4, 16, 2, 0), seconds{ 1 });
 }
 
-TEST(cache_matches_reference_over_a_whole_year) {
-    // Coarser sweep, but wide enough to cross every transition each zone has.
-    const char* zones[] = {
-        "America/New_York", "Europe/London", "Asia/Tokyo", "Australia/Sydney",
-        "Asia/Kolkata", "Pacific/Chatham", "America/Santiago", "Etc/UTC",
-    };
-    for (const char* z : zones)
-        SweepAgainstReference(z, Utc(2026, 1, 1, 0, 0, 0), Utc(2027, 1, 1, 0, 0, 0),
-                              seconds{ 3607 });   // prime-ish, so it lands all over the clock
+TEST(compute_local_matches_windows_across_cairo_dst_end) {
+    // 2026-10-29 23:59:59.999 EEST (20:59:59.999Z) becomes EET.
+    SweepAgainstReference("Africa/Cairo",
+                          Utc(2026, 10, 29, 20, 58, 0), Utc(2026, 10, 29, 21, 2, 0), seconds{ 1 });
 }
 
-TEST(cache_is_not_confused_by_interleaved_zones) {
-    // Each zone keeps its own window; querying them in turn must not let one
-    // zone's offset leak into another.
-    const char* zones[] = { "Asia/Tokyo", "America/New_York", "Europe/London",
-                            "Australia/Sydney", "Asia/Kolkata" };
-    for (int round = 0; round < 3; ++round) {
-        for (auto t = Utc(2026, 3, 8, 6, 55, 0); t < Utc(2026, 3, 8, 7, 5, 0); t += minutes{ 1 })
-            for (const char* z : zones)
-                CHECK(SameFields(ComputeLocal(z, t), Reference(z, t)));
-    }
-}
-
-TEST(cache_handles_repeated_and_reversed_queries) {
+TEST(compute_local_is_repeatable_and_survives_reversed_queries) {
     // Walking backwards leaves the cached window just as much as walking
     // forwards does; the offset must still be re-queried.
     const char* tz = "America/New_York";
     for (auto t = Utc(2026, 11, 1, 6, 2, 0); t > Utc(2026, 11, 1, 5, 58, 0); t -= seconds{ 1 })
-        CHECK(SameFields(ComputeLocal(tz, t), Reference(tz, t)));
+        CheckMatches(tz, t, ComputeLocal(tz, t));
     // And repeating one instant many times stays stable.
     auto fixed = Utc(2026, 6, 12, 3, 21, 9);
     LocalTimeFields first = ComputeLocal(tz, fixed);
@@ -227,7 +457,7 @@ TEST(cache_handles_repeated_and_reversed_queries) {
         CHECK(SameFields(ComputeLocal(tz, fixed), first));
 }
 
-TEST(cache_still_rejects_unknown_zones_after_use) {
+TEST(compute_local_still_rejects_unknown_zones_after_use) {
     // A failed lookup is cached too; it must keep failing rather than
     // returning a neighbouring zone's offset.
     auto t = Utc(2026, 6, 12, 0, 0, 0);
@@ -239,26 +469,13 @@ TEST(cache_still_rejects_unknown_zones_after_use) {
 }
 
 // ---- ZoneClock ---------------------------------------------------------------
-// One ZoneClock per sweep, stepping through time the way the renderer does,
-// so the cached offset is actually reused (and has to be dropped) as it goes.
-
-namespace {
-
-void SweepClockAgainstReference(const char* tz, system_clock::time_point from,
-                                system_clock::time_point to, seconds step) {
-    ZoneClock clock{ tz };
-    for (auto t = from; t < to; t += step)
-        CHECK(SameFields(clock.At(t), Reference(tz, t)));
-}
-
-} // namespace
 
 TEST(zone_clock_first_call_matches_reference) {
     // Nothing is cached yet, so the first answer has to come from a lookup.
     auto t = Utc(2026, 1, 15, 3, 29, 47);
     for (const char* z : { "Asia/Tokyo", "America/Los_Angeles", "Europe/London", "Etc/UTC" }) {
         ZoneClock clock{ z };
-        CHECK(SameFields(clock.At(t), Reference(z, t)));
+        CheckMatches(z, t, clock.At(t));
     }
 }
 
@@ -298,15 +515,14 @@ TEST(zone_clock_across_half_hour_dst) {
                                Utc(2026, 10, 3, 15, 28, 0), Utc(2026, 10, 3, 15, 32, 0), seconds{ 1 });
 }
 
-TEST(zone_clock_over_a_whole_year) {
-    const char* zones[] = {
-        "America/New_York", "Europe/London", "Asia/Tokyo", "Australia/Sydney",
-        "Asia/Kolkata", "Pacific/Chatham", "America/Santiago", "Australia/Lord_Howe",
-        "Etc/UTC",
-    };
-    for (const char* z : zones)
-        SweepClockAgainstReference(z, Utc(2026, 1, 1, 0, 0, 0), Utc(2027, 1, 1, 0, 0, 0),
-                                   seconds{ 3607 });
+TEST(zone_clock_across_the_new_year) {
+    // A new year can bring new rules, so the cached period ends there; zones
+    // on either side of UTC reach local midnight at different instants.
+    // Vancouver also changes rules at its new year 2026 (to permanent DST).
+    for (const char* z : { "Pacific/Kiritimati", "Pacific/Auckland", "Asia/Tokyo",
+                           "America/Santiago", "Pacific/Pago_Pago", "America/Vancouver" })
+        SweepClockAgainstReference(z, Utc(2025, 12, 31, 8, 0, 0), Utc(2026, 1, 1, 14, 0, 0),
+                                   seconds{ 61 });
 }
 
 TEST(zone_clock_when_time_runs_backwards) {
@@ -315,9 +531,9 @@ TEST(zone_clock_when_time_runs_backwards) {
     const char* tz = "America/New_York";
     ZoneClock clock{ tz };
     for (auto t = Utc(2026, 3, 8, 7, 2, 0); t > Utc(2026, 3, 8, 6, 58, 0); t -= seconds{ 1 })
-        CHECK(SameFields(clock.At(t), Reference(tz, t)));
+        CheckMatches(tz, t, clock.At(t));
     for (auto t = Utc(2026, 11, 1, 6, 2, 0); t > Utc(2026, 11, 1, 5, 58, 0); t -= seconds{ 1 })
-        CHECK(SameFields(clock.At(t), Reference(tz, t)));
+        CheckMatches(tz, t, clock.At(t));
 }
 
 TEST(zone_clock_after_large_jumps) {
@@ -329,7 +545,7 @@ TEST(zone_clock_after_large_jumps) {
     };
     ZoneClock clock{ tz };
     for (auto t : stops)
-        CHECK(SameFields(clock.At(t), Reference(tz, t)));
+        CheckMatches(tz, t, clock.At(t));
 }
 
 TEST(zone_clock_rejects_unknown_zones) {
@@ -339,5 +555,17 @@ TEST(zone_clock_rejects_unknown_zones) {
     for (int i = 0; i < 3; ++i) {
         CHECK_EQ(bad.At(t).valid, false);
         CHECK_EQ(empty.At(t).valid, false);
+    }
+}
+
+TEST(zone_clock_matches_windows_for_every_zone) {
+    // One IANA name per Windows zone, over three years -- wide enough to cross
+    // every transition, two new years and the dynamic-DST years in between.
+    std::set<std::wstring> seen;
+    for (const WindowsZoneEntry& e : AllWindowsZones()) {
+        if (!seen.insert(e.windows).second) continue;
+        const std::string tz{ e.iana };
+        SweepClockAgainstReference(tz.c_str(), Utc(2025, 1, 1, 0, 0, 0), Utc(2028, 1, 1, 0, 0, 0),
+                                   seconds{ 3607 });   // prime-ish, so it lands all over the clock
     }
 }
