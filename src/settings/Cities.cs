@@ -1,7 +1,7 @@
 namespace WorldClockSettings;
 
 // Curated "major city -> IANA tz" picker list. The user can also type any IANA
-// id directly (the gadget resolves it via std::chrono / ICU). This is the
+// id directly (the gadget maps it to a Windows time zone). This is the
 // "easy list + search" primary picker; the free-text box is the full fallback.
 public static class Cities
 {

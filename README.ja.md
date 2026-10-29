@@ -7,7 +7,7 @@
 **複数のタイムゾーンをデスクトップに常駐表示する、軽量な Windows ガジェット**
 
 Windows 7 のデスクトップガジェット風。半透明パネルに世界各都市の時刻を並べ、
-DST（サマータイム）も自動で正確に追従します。
+DST（サマータイム）は Windows 自身のタイムゾーンに従います。
 
 [English](README.md) · [インストール](#インストール) · [使い方](#使い方) · [設定](#設定) · [ビルド](#ソースからビルドする)
 
@@ -19,7 +19,7 @@ DST（サマータイム）も自動で正確に追従します。
 
 ## 特長
 
-- 🌍 **複数都市を同時表示** — IANA タイムゾーンで管理し、**DST を自動追従**（毎tick再計算）
+- 🌍 **複数都市を同時表示** — IANA 名で指定し、時差と **DST は Windows 自身のタイムゾーン**から計算（タスクバーの時計と同じデータで、Windows Update で更新されます）
 - 🕘 **デジタル / アナログ** 表示 — アナログは**午前=白い文字盤 / 午後=黒い文字盤**で昼夜が一目瞭然
 - ↔️ **縦並び / 横並び** レイアウト
 - 📅 **日付の書式を自由に指定** — `2026年8月4日 (火)` から `2026-08-04` まで
@@ -301,8 +301,10 @@ run_bench.cmd --check-golden   REM 不一致なら終了コード 1、*.actual.b
   `D3D11_CREATE_DEVICE_SINGLETHREADED | D3D11_CREATE_DEVICE_PREVENT_INTERNAL_THREADING_OPTIMIZATIONS`
   で WARP のワーカースレッドを止めています。1 秒に 1 回の描画のために常駐していた十本前後の
   スレッドとそのメモリがなくなり、1 フレームの CPU サイクルも減ります
-- **DST の正確性** — 固定オフセットを持たず、IANA 識別子と C++20 `std::chrono::zoned_time` で
-  **毎tick UTC から再計算**。これにより DST 切替も自動的に正しくなります
+- **DST の正確性** — 都市は IANA 識別子で保存し、CLDR の対応表（`tools/gen-windows-zones.ps1`）で
+  Windows のタイムゾーンに変換して、その年の規則（Dynamic DST を含む）で計算します。タスクバーの時計と
+  同じレジストリのデータで、Windows Update で更新されます。`std::chrono` のタイムゾーンは使いません。
+  MSVC はそれを `icu.dll` の ICU のデータから作りますが、そのデータは tz 2022g のまま更新されていないためです
 - **レイアウトの安定性** — テキスト幅は「最も広い数字」で測定するため、
   秒が進んでもパネル幅がガタつきません
 - **Per-Monitor DPI v2** — 本体・設定アプリとも対応
@@ -317,7 +319,8 @@ src/clock/                  C++ ガジェット本体
   main.cpp                    エントリポイント（wWinMain のみ）
   GadgetWindow.{hpp,cpp}      ウィンドウ・メニュー・ドラッグ・タイマー・ファイル監視
   Renderer.{hpp,cpp}          Direct2D 描画（デジタル / アナログ）
-  TimeEngine.{hpp,cpp}        IANA タイムゾーン / DST 計算
+  TimeEngine.{hpp,cpp}        Windows のタイムゾーンによる時差 / DST 計算
+  WindowsZoneMap.{hpp,cpp}    IANA → Windows のゾーン対応表（CLDR から生成）
   Config.{hpp,cpp}            config.json / state.json の読み書き
   Startup.{hpp,cpp}           自動起動の登録・解除
   json.hpp                    依存なしの最小 JSON パーサ

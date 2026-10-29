@@ -7,7 +7,7 @@
 **A lightweight Windows desktop gadget that shows multiple time zones at a glance**
 
 Inspired by the Windows 7 desktop gadgets: a translucent panel listing the time in
-cities around the world, with automatic and always-correct DST handling.
+cities around the world, with DST handled by Windows' own time zones.
 
 [日本語](README.ja.md) · [Install](#install) · [Usage](#usage) · [Settings](#settings) · [Build](#building-from-source)
 
@@ -19,7 +19,7 @@ cities around the world, with automatic and always-correct DST handling.
 
 ## Features
 
-- 🌍 **Multiple cities at once** — backed by IANA time zones, so **DST is always correct** (recomputed every tick)
+- 🌍 **Multiple cities at once** — IANA names, with offsets and **DST from Windows' own time zones** — the same data as the taskbar clock, kept current by Windows Update
 - 🕘 **Digital or analog** — analog faces go **light for AM, dark for PM**, so day/night reads instantly
 - ↔️ **Vertical or horizontal** layout
 - 📅 **Fully customizable date format** — from `Tue, Aug 4` to `2026-08-04`
@@ -302,9 +302,11 @@ the gadget watches the directory with `ReadDirectoryChangesW`.
   `D3D11_CREATE_DEVICE_SINGLETHREADED | D3D11_CREATE_DEVICE_PREVENT_INTERNAL_THREADING_OPTIMIZATIONS`,
   which turns off WARP's worker threads. The ten or so threads that stayed resident to draw once a
   second, and their memory, are gone, and a frame takes fewer CPU cycles.
-- **DST correctness** — no cached UTC offsets. Cities are stored as IANA identifiers and
-  recomputed from UTC **every tick** with C++20 `std::chrono::zoned_time`, so DST transitions are
-  handled automatically.
+- **DST correctness** — cities are stored as IANA identifiers, mapped to Windows time zones with
+  CLDR's table (`tools/gen-windows-zones.ps1`), and converted with that zone's rules for the year,
+  dynamic DST included. These are the registry time zones the taskbar clock uses, which Windows
+  Update keeps current. `std::chrono`'s time zones are not used: MSVC builds them from the ICU data
+  in `icu.dll`, which Windows has left at tz 2022g.
 - **Stable layout** — text is measured using the widest digit glyph, so the panel does not jitter
   as the seconds tick over.
 - **Per-Monitor DPI v2** in both processes.
@@ -319,7 +321,8 @@ src/clock/                  C++ gadget
   main.cpp                    entry point (wWinMain only)
   GadgetWindow.{hpp,cpp}      window, menu, dragging, timer, file watching
   Renderer.{hpp,cpp}          Direct2D rendering (digital / analog)
-  TimeEngine.{hpp,cpp}        IANA time zone / DST computation
+  TimeEngine.{hpp,cpp}        time zone / DST computation on Windows' time zones
+  WindowsZoneMap.{hpp,cpp}    IANA -> Windows zone table (generated from CLDR)
   Config.{hpp,cpp}            config.json / state.json I/O
   Startup.{hpp,cpp}           launch-at-startup registration
   json.hpp                    minimal dependency-free JSON parser
