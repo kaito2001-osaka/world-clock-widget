@@ -97,24 +97,53 @@ public sealed class ConfigModel
             return Default();
         }
 
-        try
+        var model = Parse(json);
+        if (model != null)
         {
-            var model = JsonSerializer.Deserialize<ConfigModel>(json, Opts);
-            if (model != null)
-            {
-                // Like the gadget: no usable city list means the default cities.
-                model.Cities ??= new();
-                if (model.Cities.Count == 0) model.Cities = Default().Cities;
-                status = ConfigLoadStatus.Ok;
-                return model;
-            }
-        }
-        catch
-        {
-            // Syntax error or a value of the wrong type.
+            status = ConfigLoadStatus.Ok;
+            return model;
         }
         status = ConfigLoadStatus.Invalid;
         return Default();
+    }
+
+    // Null for a syntax error or a value of the wrong type. Kept apart from
+    // Load so it can be exercised without touching the real config.json.
+    internal static ConfigModel? Parse(string json)
+    {
+        try
+        {
+            var model = JsonSerializer.Deserialize<ConfigModel>(json, Opts);
+            model?.Normalize();
+            return model;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    // System.Text.Json stores a JSON null as is, even in properties declared
+    // non-null, so a hand-edited "cities": [null] or "label": null would reach
+    // the window and crash it (#50). Every model read from a file comes
+    // through here, Merge's `disk` included.
+    private void Normalize()
+    {
+        var defaults = new ConfigModel();
+        // Like the gadget: null entries are skipped, and no usable city list
+        // means the default cities.
+        Cities = (Cities ?? new()).Where(c => c != null).ToList();
+        foreach (var city in Cities)
+        {
+            city.Label ??= "";
+            city.Tz ??= "";
+        }
+        if (Cities.Count == 0) Cities = Default().Cities;
+        DisplayMode ??= defaults.DisplayMode;
+        Layout ??= defaults.Layout;
+        DateFormat ??= defaults.DateFormat;
+        Size ??= defaults.Size;
+        Theme ??= defaults.Theme;
     }
 
     public static string BackupPath => ConfigPath + ".bak";

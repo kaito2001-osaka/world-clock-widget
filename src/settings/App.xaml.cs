@@ -25,6 +25,15 @@ public partial class App : Application
             return;
         }
         base.OnStartup(e);
+        // Without a handler an exception (e.g. while the window loads config)
+        // ends the process before any window shows; say why before closing.
+        DispatcherUnhandledException += (_, args) =>
+        {
+            args.Handled = true;
+            MessageBox.Show(Strings.UnexpectedError(args.Exception.Message),
+                Strings.WindowTitle, MessageBoxButton.OK, MessageBoxImage.Error);
+            Shutdown(1);
+        };
         // Created here rather than through StartupUri, so a second instance
         // never builds (and loads config into) a window it would only discard.
         new MainWindow().Show();
