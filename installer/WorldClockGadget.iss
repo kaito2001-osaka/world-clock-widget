@@ -49,18 +49,20 @@ Name: "en"; MessagesFile: "compiler:Default.isl"
 Name: "ja"; MessagesFile: "compiler:Languages\Japanese.isl"
 
 [CustomMessages]
-en.StartupIcon=Start automatically with Windows
-en.StartupGroup=Startup:
 en.DeleteSettingsPrompt=Also delete the settings file (city list, display settings, window position)?
 en.DeleteSettingsHint=Choose [No] to restore your current settings when you reinstall.
-ja.StartupIcon=Windows 起動時に自動的に開始する
-ja.StartupGroup=スタートアップ:
 ja.DeleteSettingsPrompt=設定ファイル（都市リスト・表示設定・ウィンドウ位置）も削除しますか？
 ja.DeleteSettingsHint=［いいえ］を選ぶと、再インストール時に現在の設定がそのまま復元されます。
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
-Name: "startupicon"; Description: "{cm:StartupIcon}"; GroupDescription: "{cm:StartupGroup}"; Flags: unchecked
+; No "start with Windows" task. Autostart is the HKCU\Run value that the
+; settings app's toggle and the gadget manage; an installer-made shortcut is a
+; second autostart the app cannot see, so turning the toggle off left it on.
+
+[InstallDelete]
+; The Startup-folder shortcut that versions up to 1.2.0 could create.
+Type: files; Name: "{userstartup}\{#AppName}.lnk"
 
 [Files]
 ; Whole self-contained staging folder (gadget + settings + .NET runtime).
@@ -71,7 +73,6 @@ Name: "{group}\{#AppName}"; Filename: "{app}\{#GadgetExe}"
 Name: "{group}\World Clock 設定"; Filename: "{app}\{#SettingsExe}"
 Name: "{group}\{cm:UninstallProgram,{#AppName}}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#GadgetExe}"; Tasks: desktopicon
-Name: "{userstartup}\{#AppName}"; Filename: "{app}\{#GadgetExe}"; Tasks: startupicon
 
 [Registry]
 ; The in-app "launch at startup" toggle writes this HKCU\Run value; remove it on uninstall.

@@ -49,7 +49,9 @@ That's it. Note that:
 
 - **No admin rights needed** — it installs per-user into `%LOCALAPPDATA%\Programs\WorldClockGadget`
 - **No .NET install needed** — the runtime is bundled with the settings app
-- The installer optionally creates a desktop icon and enables launch-at-startup
+- The installer optionally creates a desktop icon
+- Launch at Windows startup is turned on and off in the settings app. If you chose it in the
+  installer of 1.2.0 or earlier, upgrading removes that shortcut, so turn it back on in Settings
 
 > [!NOTE]
 > The app is unsigned (a personal project), so **Microsoft Defender SmartScreen** may warn you
