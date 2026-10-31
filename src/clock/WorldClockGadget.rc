@@ -6,8 +6,8 @@
 IDI_APPICON ICON "../../icons/worldclock.ico"
 
 VS_VERSION_INFO VERSIONINFO
- FILEVERSION    1,2,0,0
- PRODUCTVERSION 1,2,0,0
+ FILEVERSION    1,2,1,0
+ PRODUCTVERSION 1,2,1,0
  FILEFLAGSMASK  VS_FFI_FILEFLAGSMASK
  FILEFLAGS      0
  FILEOS         VOS_NT_WINDOWS32
@@ -20,12 +20,12 @@ BEGIN
         BEGIN
             VALUE "CompanyName",      "World Clock Gadget"
             VALUE "FileDescription",  "World Clock Gadget"
-            VALUE "FileVersion",      "1.2.0.0"
+            VALUE "FileVersion",      "1.2.1.0"
             VALUE "InternalName",     "WorldClockGadget"
             VALUE "LegalCopyright",   "Copyright (c) 2026 Kaito Ito. MIT License."
             VALUE "OriginalFilename", "WorldClockGadget.exe"
             VALUE "ProductName",      "World Clock Gadget"
-            VALUE "ProductVersion",   "1.2.0.0"
+            VALUE "ProductVersion",   "1.2.1.0"
         END
     END
     BLOCK "VarFileInfo"
