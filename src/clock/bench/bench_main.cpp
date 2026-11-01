@@ -4,6 +4,7 @@
 //   WorldClockBench --write-golden [--golden-dir DIR]
 //   WorldClockBench --check-golden [--golden-dir DIR]
 //   WorldClockBench --check-incremental [--golden-dir DIR]
+//   WorldClockBench --check-format-failure
 //
 // The gadget draws at 1 Hz, so its process CPU time over a few minutes is
 // noise. This drives the real Renderer against a hidden layered window with
@@ -216,9 +217,7 @@ HWND CreateHiddenLayeredWindow() {
 
 // A fresh Renderer per case, so no case's output depends on the one before.
 bool Setup(Renderer& r, HWND hwnd, const Case& c) {
-    if (!r.Init(hwnd, MakeConfig(c))) return false;
-    r.OnDpiChanged(c.dpi);
-    return true;
+    return r.Init(hwnd, MakeConfig(c)) && r.OnDpiChanged(c.dpi);
 }
 
 bool FrameComplete(const Renderer::BenchStamps& s) {
@@ -504,12 +503,83 @@ int RunIncrementalCheck(HWND hwnd, const std::filesystem::path& dumpDir) {
     return failures ? 1 : 0;
 }
 
+// ---- text format failure ------------------------------------------------------
+
+// Makes every text format creation fail, then asks for a config reload and a
+// DPI change that would both need new formats. Both must report the failure,
+// and the next frame must be the one already on screen, not a crash or a
+// blank panel. Once creation works again, a reload must apply.
+int RunFormatFailureCheck(HWND hwnd) {
+    int failures = 0, passed = 0;
+    for (const Case& c : GoldenCases()) {
+        const std::string name = GoldenName(c);
+        Renderer r;
+        if (!Setup(r, hwnd, c)) {
+            std::printf("FAIL  %s: renderer init failed\n", name.c_str());
+            ++failures;
+            continue;
+        }
+        r.Render(kStart);
+        const SIZE before = r.BenchSurface();
+        const uint8_t* px = static_cast<const uint8_t*>(r.BenchPixels());
+        if (!FrameComplete(r.BenchLastFrame()) || !px) {
+            std::printf("FAIL  %s: first frame returned early\n", name.c_str());
+            ++failures;
+            r.Shutdown();
+            continue;
+        }
+        const size_t bytes = (size_t)before.cx * 4 * (size_t)before.cy;
+        const std::vector<uint8_t> expected(px, px + bytes);
+
+        Case other = c;
+        other.size = c.size == SizeClass::Large ? SizeClass::Small : SizeClass::Large;
+        const UINT otherDpi = c.dpi == 96 ? 144 : 96;
+
+        const char* error = nullptr;
+        r.BenchFailTextFormats(true);
+        if (r.SetConfig(MakeConfig(other)))  error = "SetConfig succeeded";
+        else if (r.OnDpiChanged(otherDpi))   error = "OnDpiChanged succeeded";
+        if (!error) {
+            r.Render(kStart);
+            const SIZE after = r.BenchSurface();
+            px = static_cast<const uint8_t*>(r.BenchPixels());
+            if (!FrameComplete(r.BenchLastFrame()) || !px)
+                error = "frame after the failure returned early";
+            else if (after.cx != before.cx || after.cy != before.cy)
+                error = "surface size changed";
+            else if (CompareBuffers(expected.data(), px, bytes).differingBytes != 0)
+                error = "frame after the failure differs";
+        }
+        r.BenchFailTextFormats(false);
+        if (!error) {
+            if (!r.SetConfig(MakeConfig(other))) error = "SetConfig failed after recovery";
+            else {
+                r.Render(kStart);
+                if (!FrameComplete(r.BenchLastFrame())) error = "frame after recovery returned early";
+            }
+        }
+
+        if (error) {
+            std::printf("FAIL  %s: %s\n", name.c_str(), error);
+            ++failures;
+        } else {
+            ++passed;
+        }
+        r.Shutdown();
+    }
+    std::printf("%d of %zu configuration(s) keep their frame when text formats fail\n",
+                passed, GoldenCases().size());
+    if (failures) std::printf("%d FAILED\n", failures);
+    return failures ? 1 : 0;
+}
+
 int Usage() {
     std::fprintf(stderr,
         "usage: WorldClockBench [--frames N]\n"
         "       WorldClockBench --write-golden [--golden-dir DIR]\n"
         "       WorldClockBench --check-golden [--golden-dir DIR]\n"
-        "       WorldClockBench --check-incremental [--golden-dir DIR]\n");
+        "       WorldClockBench --check-incremental [--golden-dir DIR]\n"
+        "       WorldClockBench --check-format-failure\n");
     return 2;
 }
 
@@ -517,7 +587,9 @@ int Usage() {
 
 int wmain(int argc, wchar_t** argv) {
     int frames = 100;
-    enum class Mode { Timing, WriteGolden, CheckGolden, CheckIncremental } mode = Mode::Timing;
+    enum class Mode {
+        Timing, WriteGolden, CheckGolden, CheckIncremental, CheckFormatFailure
+    } mode = Mode::Timing;
     std::filesystem::path goldenDir = L"golden";
 
     for (int i = 1; i < argc; ++i) {
@@ -533,6 +605,8 @@ int wmain(int argc, wchar_t** argv) {
             mode = Mode::CheckGolden;
         } else if (a == L"--check-incremental") {
             mode = Mode::CheckIncremental;
+        } else if (a == L"--check-format-failure") {
+            mode = Mode::CheckFormatFailure;
         } else {
             return Usage();
         }
@@ -554,6 +628,7 @@ int wmain(int argc, wchar_t** argv) {
         case Mode::WriteGolden: rc = RunGoldens(hwnd, goldenDir, true); break;
         case Mode::CheckGolden: rc = RunGoldens(hwnd, goldenDir, false); break;
         case Mode::CheckIncremental: rc = RunIncrementalCheck(hwnd, goldenDir); break;
+        case Mode::CheckFormatFailure: rc = RunFormatFailureCheck(hwnd); break;
     }
 
     DestroyWindow(hwnd);

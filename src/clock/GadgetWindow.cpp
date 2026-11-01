@@ -242,7 +242,9 @@ LRESULT GadgetWindow::HandleMessage(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
 
         case WM_DPICHANGED: {
             UINT dpi = HIWORD(wParam);
-            renderer_.OnDpiChanged(dpi);
+            // On a failure the renderer keeps the old DPI's layout, which
+            // still draws correctly, just at the old size.
+            (void)renderer_.OnDpiChanged(dpi);
             RECT* suggested = reinterpret_cast<RECT*>(lParam);
             // Move to the suggested origin; size follows from UpdateLayeredWindow.
             SetWindowPos(hwnd, nullptr, suggested->left, suggested->top,
@@ -383,9 +385,12 @@ void GadgetWindow::ReloadConfig() {
     configNoticeShown_ = false;
 
     if (!NeedsApply(configFromFile_, config_, loaded.config)) return;
+    // The renderer keeps the old config when it cannot apply the new one, so
+    // config_ does too: the timer cadence and window state then match what is
+    // drawn, and the next change to the file tries again.
+    if (!renderer_.SetConfig(loaded.config)) return;
     configFromFile_ = true;
     config_ = loaded.config;
-    renderer_.SetConfig(config_);
     ApplyTopmost();
     ApplyStartupRegistry(config_.launchAtStartup);
     lastShown_.reset();   // force redraw

@@ -253,6 +253,11 @@ byte after every frame. The synthetic time crosses midnight and noon, jumps days
 back an hour. It needs no goldens. On a mismatch it exits with 1 and writes both frames to
 `build\golden` as `*.incremental.bgra` / `*.full.bgra`.
 
+**Text format failure check** — `run_bench.cmd --check-format-failure` makes DirectWrite text
+format creation fail for each golden configuration, then reloads the config and changes the DPI.
+Both must report the failure, the next frame must match the previous one byte for byte, and the
+config must apply once creation works again. It needs no goldens.
+
 **Resident footprint** — start the gadget, leave it for 5 minutes, then take 3 samples one minute
 apart and compare the medians.
 
