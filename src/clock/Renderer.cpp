@@ -6,6 +6,7 @@
 #include <d3d11.h>
 #include <array>
 #include <string>
+#include <utility>
 #include <vector>
 #include <cmath>
 #include <cstdio>
@@ -123,34 +124,55 @@ void Renderer::Shutdown() {
     dwFactory_.Reset(); d2dFactory_.Reset();
 }
 
-void Renderer::SetConfig(const Config& cfg) {
+// The formats are sized from cfg_ and dpi_, so those are switched first and
+// put back if the formats cannot be made: the old formats, layout and frame
+// then all still belong to the same config and DPI.
+bool Renderer::SetConfig(const Config& cfg) {
+    Config prev = std::move(cfg_);
     cfg_ = cfg;
-    CreateTextFormats();
+    if (!CreateTextFormats()) {
+        cfg_ = std::move(prev);
+        return false;
+    }
     RecomputeLayout();
     RebuildVisuals();
     fullRedraw_ = true;
+    return true;
 }
 
-void Renderer::OnDpiChanged(UINT dpi) {
+bool Renderer::OnDpiChanged(UINT dpi) {
+    const UINT prev = dpi_;
     dpi_ = dpi ? dpi : 96;
-    CreateTextFormats();
+    if (!CreateTextFormats()) {
+        dpi_ = prev;
+        return false;
+    }
     RecomputeLayout();
     RebuildVisuals();
     fullRedraw_ = true;
+    return true;
 }
 
 bool Renderer::CreateTextFormats() {
-    fmtLabel_.Reset(); fmtTime_.Reset(); fmtDate_.Reset();
     auto make = [&](float sizeDip, DWRITE_FONT_WEIGHT w, ComPtr<IDWriteTextFormat>& out) {
+#ifdef WORLDCLOCK_BENCH
+        if (benchFailTextFormats_) return false;
+#endif
         return SUCCEEDED(dwFactory_->CreateTextFormat(
             L"Segoe UI", nullptr, w, DWRITE_FONT_STYLE_NORMAL,
             DWRITE_FONT_STRETCH_NORMAL, sizeDip, L"", &out));
     };
     // A null format would reach the draw calls, and in the analog path a text
-    // alignment call, as a null dereference. Fail cleanly instead.
-    if (!make(Sc(13.f), DWRITE_FONT_WEIGHT_SEMI_BOLD, fmtLabel_)) return false;
-    if (!make(Sc(26.f), DWRITE_FONT_WEIGHT_LIGHT,     fmtTime_))  return false;
-    if (!make(Sc(11.f), DWRITE_FONT_WEIGHT_NORMAL,    fmtDate_))  return false;
+    // alignment call, as a null dereference. So the new formats are made aside
+    // and swapped in only once all three exist; a failure leaves the current
+    // ones in place.
+    ComPtr<IDWriteTextFormat> label, time, date;
+    if (!make(Sc(13.f), DWRITE_FONT_WEIGHT_SEMI_BOLD, label)) return false;
+    if (!make(Sc(26.f), DWRITE_FONT_WEIGHT_LIGHT,     time))  return false;
+    if (!make(Sc(11.f), DWRITE_FONT_WEIGHT_NORMAL,    date))  return false;
+    fmtLabel_ = std::move(label);
+    fmtTime_  = std::move(time);
+    fmtDate_  = std::move(date);
 
     // Find the widest digit once per format change (same family throughout, so
     // one probe covers every text style we draw). Compared on the raw advance:

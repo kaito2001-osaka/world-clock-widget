@@ -41,8 +41,10 @@ public:
     bool Init(HWND hwnd, const Config& cfg);
     void Shutdown();
 
-    void SetConfig(const Config& cfg);  // recomputes layout
-    void OnDpiChanged(UINT dpi);        // dpi = pixels per 96
+    // Both recompute the layout. They return false, and keep the previous
+    // config / DPI, fonts and layout, when the fonts could not be recreated.
+    bool SetConfig(const Config& cfg);
+    bool OnDpiChanged(UINT dpi);        // dpi = pixels per 96
 
     // Pixel size the window should be to fit the current config at this DPI.
     SIZE DesiredClientSize() const { return desired_; }
@@ -69,10 +71,13 @@ public:
     // Make the next Render() redraw the whole panel, as the first frame does;
     // the reference that incremental frames are compared against.
     void BenchForceFullRedraw() { fullRedraw_ = true; }
+    // While set, every text format creation fails, as on out of memory.
+    void BenchFailTextFormats(bool fail) { benchFailTextFormats_ = fail; }
 #endif
 
 private:
 #ifdef WORLDCLOCK_BENCH
+    bool benchFailTextFormats_ = false;
     BenchStamps bench_{};
     std::vector<unsigned char> benchPixels_;
 #endif
@@ -163,7 +168,8 @@ private:
     void ReleaseDeviceResources();
     // UpdateLayeredWindowIndirect from `frame`, the target's DC.
     bool Present(HDC frame, SIZE size, bool full);
-    bool CreateTextFormats();       // false when a font could not be created
+    // False, with the current formats kept, when a font could not be created.
+    bool CreateTextFormats();
     void RecomputeWorstCaseSizes();
     void RecomputeLayout();         // m_, block sizes, maxW_, desired_, clocks_, geom_
     void RebuildVisuals();          // labels + cached layouts, after a change
