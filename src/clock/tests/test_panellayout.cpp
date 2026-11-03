@@ -310,3 +310,24 @@ TEST(ink_reaches_counts_overhang_and_a_pixel_of_aa) {
     CHECK(!InkReaches(dirty, -20.f, 50.f, 29.f, 10.f, none));
     CHECK(InkReaches(dirty, -20.f, 50.f, 29.5f, 10.f, none));
 }
+
+TEST(panellayout_bitmap_limit_cuts_only_the_sides_past_it) {
+    const SIZE inside = ClampToBitmapLimit(SIZE{ 300, 200 }, 16384);
+    CHECK_EQ(inside.cx, 300L);
+    CHECK_EQ(inside.cy, 200L);
+    const SIZE atLimit = ClampToBitmapLimit(SIZE{ 16384, 16384 }, 16384);
+    CHECK_EQ(atLimit.cx, 16384L);
+    CHECK_EQ(atLimit.cy, 16384L);
+    const SIZE wide = ClampToBitmapLimit(SIZE{ 40000, 300 }, 16384);
+    CHECK_EQ(wide.cx, 16384L);
+    CHECK_EQ(wide.cy, 300L);
+    const SIZE tall = ClampToBitmapLimit(SIZE{ 300, 16385 }, 16384);
+    CHECK_EQ(tall.cx, 300L);
+    CHECK_EQ(tall.cy, 16384L);
+}
+
+TEST(panellayout_bitmap_limit_keeps_at_least_one_pixel) {
+    const SIZE empty = ClampToBitmapLimit(SIZE{ 0, -5 }, 16384);
+    CHECK_EQ(empty.cx, 1L);
+    CHECK_EQ(empty.cy, 1L);
+}

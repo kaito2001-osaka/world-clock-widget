@@ -92,6 +92,9 @@ public static class Strings
         "一覧から選ぶか、Asia/Tokyo のような IANA 名を入力してください。",
         $"\"{text}\" is not a recognized time zone name. " +
         "Pick one from the list, or type an IANA name such as Asia/Tokyo.");
+    public static string TooManyCities(int max) => T(
+        $"都市は {max} 件まで追加できます。",
+        $"You can add up to {max} cities.");
     public static string UnexpectedError(string error) => T(
         $"予期しないエラーが発生したため、設定を終了します:\n{error}",
         $"An unexpected error occurred, so Settings will close:\n{error}");

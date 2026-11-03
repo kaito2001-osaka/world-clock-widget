@@ -28,6 +28,14 @@ public partial class MainWindow : FluentWindow
         DateFormatBox.AddHandler(
             System.Windows.Controls.Primitives.TextBoxBase.TextChangedEvent,
             new System.Windows.Controls.TextChangedEventHandler((_, _) => UpdateDatePreview()));
+        // ComboBox has no MaxLength of its own; its text box exists once the
+        // template is applied.
+        DateFormatBox.Loaded += (_, _) =>
+        {
+            if (DateFormatBox.Template.FindName("PART_EditableTextBox", DateFormatBox)
+                    is System.Windows.Controls.TextBox box)
+                box.MaxLength = ConfigModel.MaxDateFormatLength;
+        };
         // The "unknown zone" message is about the text that was rejected; drop it
         // once the user edits or picks something else.
         CityPicker.AddHandler(
@@ -160,6 +168,13 @@ public partial class MainWindow : FluentWindow
     // ---- City list editing ----
     private void OnAddCity(object sender, RoutedEventArgs e)
     {
+        if (_cities.Count >= ConfigModel.MaxCities)
+        {
+            CityError.Message = Strings.TooManyCities(ConfigModel.MaxCities);
+            CityError.IsOpen = true;
+            return;
+        }
+
         CityModel? toAdd = null;
 
         if (CityPicker.SelectedItem is Cities.Entry entry)

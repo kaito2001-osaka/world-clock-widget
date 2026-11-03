@@ -345,3 +345,92 @@ TEST(config_scale_follows_size_class) {
     c.size = SizeClass::Medium; CHECK_EQ(c.scale() == 1.0, true);
     c.size = SizeClass::Large;  CHECK_EQ(c.scale() == 1.3, true);
 }
+
+namespace {
+
+// A document with one city labelled `label` and the given date format.
+std::string LabelAndFormatDoc(const std::string& label, const std::string& dateFormat) {
+    return R"({"cities":[{"label":")" + label + R"(","tz":"Asia/Tokyo"}],"dateFormat":")" +
+           dateFormat + R"("})";
+}
+
+// A document with `n` valid cities, labelled "C0", "C1", ...; `leading` adds
+// a city without a time zone in front of them.
+std::string CitiesDoc(size_t n, bool leading = false) {
+    std::string doc = R"({"cities":[)";
+    if (leading) doc += R"({"label":"none","tz":""},)";
+    for (size_t i = 0; i < n; ++i) {
+        if (i) doc += ",";
+        doc += R"({"label":"C)" + std::to_string(i) + R"(","tz":"Asia/Tokyo"})";
+    }
+    return doc + "]}";
+}
+
+} // namespace
+
+TEST(config_truncates_a_long_label_and_date_format) {
+    Config c = Parsed(LabelAndFormatDoc(std::string(65, 'a'), std::string(65, 'd')).c_str());
+    CHECK_EQ(c.cities[0].label, std::string(kMaxLabelChars, 'a'));
+    CHECK_EQ(c.dateFormat, std::string(kMaxDateFormatChars, 'd'));
+}
+
+TEST(config_keeps_a_label_and_date_format_at_the_limit) {
+    const std::string label(kMaxLabelChars, 'a');
+    const std::string format(kMaxDateFormatChars, 'd');
+    Config c = Parsed(LabelAndFormatDoc(label, format).c_str());
+    CHECK_EQ(c.cities[0].label, label);
+    CHECK_EQ(c.dateFormat, format);
+}
+
+TEST(config_truncation_counts_code_points_and_keeps_sequences_whole) {
+    const std::string kanji = "\xE6\x97\xA5";            // U+65E5, 3 bytes
+    const std::string globe = "\xF0\x9F\x8C\x8D";        // U+1F30D, 4 bytes
+    std::string label, format;
+    for (size_t i = 0; i < kMaxLabelChars + 1; ++i) label += kanji;
+    for (size_t i = 0; i < kMaxDateFormatChars + 1; ++i) format += globe;
+    Config c = Parsed(LabelAndFormatDoc(label, format).c_str());
+    CHECK_EQ(c.cities[0].label.size(), kMaxLabelChars * kanji.size());
+    CHECK_EQ(c.dateFormat.size(), kMaxDateFormatChars * globe.size());
+    CHECK_EQ(c.cities[0].label, label.substr(0, kMaxLabelChars * kanji.size()));
+
+    // A mix: 63 ASCII then a 4-byte code point is exactly 64 and stays.
+    std::string mixed = std::string(kMaxLabelChars - 1, 'a') + globe;
+    std::string cut = mixed;
+    TruncateUtf8(cut, kMaxLabelChars);
+    CHECK_EQ(cut, mixed);
+    // One more ASCII in front pushes the whole 4-byte sequence out.
+    cut = "a" + mixed;
+    TruncateUtf8(cut, kMaxLabelChars);
+    CHECK_EQ(cut, std::string(kMaxLabelChars, 'a'));
+    // Zero leaves nothing; an empty string stays empty.
+    cut = mixed;
+    TruncateUtf8(cut, 0);
+    CHECK_EQ(cut, std::string());
+    TruncateUtf8(cut, kMaxLabelChars);
+    CHECK_EQ(cut, std::string());
+}
+
+TEST(config_keeps_at_most_the_first_32_cities) {
+    Config c = Parsed(CitiesDoc(kMaxCities + 1).c_str());
+    CHECK_EQ(c.cities.size(), kMaxCities);
+    CHECK_EQ(c.cities.front().label, std::string("C0"));
+    CHECK_EQ(c.cities.back().label, "C" + std::to_string(kMaxCities - 1));
+
+    CHECK_EQ(Parsed(CitiesDoc(kMaxCities).c_str()).cities.size(), kMaxCities);
+}
+
+TEST(config_city_limit_counts_only_cities_with_a_timezone) {
+    Config c = Parsed(CitiesDoc(kMaxCities, true).c_str());
+    CHECK_EQ(c.cities.size(), kMaxCities);
+    CHECK_EQ(c.cities.front().label, std::string("C0"));
+    CHECK_EQ(c.cities.back().label, "C" + std::to_string(kMaxCities - 1));
+}
+
+TEST(config_truncated_values_round_trip_unchanged) {
+    Config c = Parsed(LabelAndFormatDoc(std::string(100, 'a'), std::string(100, 'd')).c_str());
+    TempFile f("truncated_round_trip");
+    CHECK(WriteConfigFile(f.path, c));
+    ConfigLoadResult r = LoadConfigFile(f.path);
+    CHECK(r.status == ConfigLoadStatus::Ok);
+    CHECK(r.config == c);
+}

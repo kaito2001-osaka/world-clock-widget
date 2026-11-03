@@ -139,6 +139,18 @@ Config DefaultConfig() {
     return c;
 }
 
+void TruncateUtf8(std::string& s, size_t maxCodePoints) {
+    size_t count = 0;
+    for (size_t i = 0; i < s.size(); ++i) {
+        // Every byte that is not a continuation byte (10xxxxxx) starts a code
+        // point, so cutting before one never splits a sequence.
+        if (((unsigned char)s[i] & 0xC0) != 0x80 && count++ == maxCodePoints) {
+            s.resize(i);
+            return;
+        }
+    }
+}
+
 static DisplayMode ParseMode(const std::string& s) {
     return (s == "analog") ? DisplayMode::Analog : DisplayMode::Digital;
 }
@@ -160,9 +172,11 @@ std::optional<Config> ParseConfig(const std::string& text) {
         if (const json::Value* cities = root.find("cities"); cities && cities->isArray()) {
             c.cities.clear();
             for (const auto& cv : cities->arr) {
+                if (c.cities.size() == kMaxCities) break;
                 CityEntry e;
                 e.label = cv.getString("label", "");
                 e.tz    = cv.getString("tz", "");
+                TruncateUtf8(e.label, kMaxLabelChars);
                 if (!e.tz.empty()) c.cities.push_back(std::move(e));
             }
             if (c.cities.empty()) c.cities = DefaultConfig().cities;
@@ -173,6 +187,7 @@ std::optional<Config> ParseConfig(const std::string& text) {
         c.showDate     = root.getBool("showDate", true);
         c.dateFormat   = root.getString("dateFormat", "ddd, MMM d");
         if (c.dateFormat.empty()) c.dateFormat = "ddd, MMM d";
+        TruncateUtf8(c.dateFormat, kMaxDateFormatChars);
         c.showSeconds  = root.getBool("showSeconds", false);
         c.size         = ParseSize(root.getString("size", "medium"));
         c.opacity      = root.getInt("opacity", 85);

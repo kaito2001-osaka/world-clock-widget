@@ -62,6 +62,19 @@ std::wstring StatePath();    // state.json
 
 Config       DefaultConfig();
 
+// Upper bounds ParseConfig enforces. The panel is sized from the worst-case
+// string of every city, so without them a hand-edited config.json could ask
+// for a bitmap of tens of MB, or one too large to create at all (#54). The
+// settings app (ConfigModel.cs) enforces the same numbers. Lengths count code
+// points; the settings app counts UTF-16 units, so what it saves always fits.
+constexpr size_t kMaxLabelChars      = 64;
+constexpr size_t kMaxDateFormatChars = 64;
+constexpr size_t kMaxCities          = 32;
+
+// Cut `s` to at most `maxCodePoints` code points, never inside a UTF-8
+// sequence.
+void TruncateUtf8(std::string& s, size_t maxCodePoints);
+
 // Parse config.json text. Pure (no file system), so it is unit testable.
 // Returns nullopt when the text is not a JSON object at all: a typo is the
 // caller's to handle, not something to silently turn into the defaults.
