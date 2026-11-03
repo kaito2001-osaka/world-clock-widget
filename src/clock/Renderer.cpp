@@ -432,10 +432,11 @@ void Renderer::ReleaseDevice() {
 }
 
 bool Renderer::EnsureSurface(int w, int h) {
-    if (w < 1) w = 1;
-    if (h < 1) h = 1;
     // Render releases the device when it is lost; start over with a new one.
     if (!rt_ && !CreateDevice()) return false;
+    const SIZE size = ClampToBitmapLimit(SIZE{ w, h }, rt_->GetMaximumBitmapSize());
+    w = size.cx;
+    h = size.cy;
     if (target_ && surface_.cx == w && surface_.cy == h) return true;
 
     rt_->SetTarget(nullptr);
@@ -525,8 +526,7 @@ void Renderer::Render(system_clock::time_point now) {
     UpdateFrame(now);
     BENCH_STAMP(1);
 
-    int w = desired_.cx, h = desired_.cy;
-    if (!EnsureSurface(w, h) || !rt_) return;
+    if (!EnsureSurface(desired_.cx, desired_.cy) || !rt_) return;
 
     // Read after UpdateFrame and EnsureSurface, either of which can ask for it.
     const bool full = fullRedraw_;
@@ -596,7 +596,8 @@ void Renderer::Render(system_clock::time_point now) {
     BENCH_STAMP(4);
     if (SUCCEEDED(hr)) {
         // If the window missed this update, the next frame has to resend it all.
-        if (!Present(frame, SIZE{ w, h }, full)) fullRedraw_ = true;
+        // The surface, not the desired size: it may have been cut to fit.
+        if (!Present(frame, surface_, full)) fullRedraw_ = true;
         // GDI only read from the DC, so nothing in it has to go back into the
         // bitmap: the area it changed is empty.
         RECT unchanged = { 0, 0, 0, 0 };
@@ -642,7 +643,12 @@ bool Renderer::Present(HDC frame, SIZE size, bool full) {
     ulw.dwFlags  = ULW_ALPHA;
     // A full frame may also be a new size, and a dirty rect is only accepted
     // when the size is unchanged; it also has to cover everything anyway.
-    ulw.prcDirty = full ? nullptr : &dirtyUnion_;
+    // On a surface cut to the bitmap limit the union can reach past it, and
+    // a dirty rect outside the size fails the whole update.
+    RECT dirty{};
+    const RECT bounds = { 0, 0, size.cx, size.cy };
+    IntersectRect(&dirty, &dirtyUnion_, &bounds);
+    ulw.prcDirty = full ? nullptr : &dirty;
     const bool ok = UpdateLayeredWindowIndirect(hwnd_, &ulw) != FALSE;
     ReleaseDC(nullptr, screen);
     return ok;

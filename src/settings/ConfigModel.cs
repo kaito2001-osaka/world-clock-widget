@@ -42,6 +42,14 @@ public sealed class ConfigModel
     [JsonPropertyName("launchAtStartup")] public bool LaunchAtStartup { get; set; } = false;
     [JsonPropertyName("theme")]        public string Theme { get; set; } = "dark";
 
+    // The gadget's limits (kMaxLabelChars and friends in Config.hpp): it sizes
+    // its panel from the longest strings of every city, so nothing longer or
+    // more may reach it (#54). Lengths count UTF-16 units here and code points
+    // there, so a value that fits here always fits there.
+    public const int MaxLabelLength = 64;
+    public const int MaxDateFormatLength = 64;
+    public const int MaxCities = 32;
+
     private static readonly JsonSerializerOptions Opts = new()
     {
         WriteIndented = true,
@@ -132,18 +140,25 @@ public sealed class ConfigModel
         var defaults = new ConfigModel();
         // Like the gadget: null entries are skipped, and no usable city list
         // means the default cities.
-        Cities = (Cities ?? new()).Where(c => c != null).ToList();
+        Cities = (Cities ?? new()).Where(c => c != null).Take(MaxCities).ToList();
         foreach (var city in Cities)
         {
-            city.Label ??= "";
+            city.Label = Truncate(city.Label ?? "", MaxLabelLength);
             city.Tz ??= "";
         }
         if (Cities.Count == 0) Cities = Default().Cities;
         DisplayMode ??= defaults.DisplayMode;
         Layout ??= defaults.Layout;
-        DateFormat ??= defaults.DateFormat;
+        DateFormat = Truncate(DateFormat ?? defaults.DateFormat, MaxDateFormatLength);
         Size ??= defaults.Size;
         Theme ??= defaults.Theme;
+    }
+
+    // Never ends on half a surrogate pair, which would not encode to UTF-8.
+    private static string Truncate(string s, int max)
+    {
+        if (s.Length <= max) return s;
+        return s[..(char.IsHighSurrogate(s[max - 1]) ? max - 1 : max)];
     }
 
     public static string BackupPath => ConfigPath + ".bak";

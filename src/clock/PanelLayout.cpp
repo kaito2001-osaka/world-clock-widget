@@ -112,3 +112,9 @@ bool AvoidsCorners(const RECT& r, SIZE panel, float radius) {
         && clear(radius - (float)r.left, (float)r.bottom - (h - radius))
         && clear((float)r.right - (w - radius), (float)r.bottom - (h - radius));
 }
+
+SIZE ClampToBitmapLimit(SIZE desired, UINT32 maxPx) {
+    const LONG limit = (LONG)(std::min)(maxPx, (UINT32)LONG_MAX);
+    auto clamp = [&](LONG v) { return (std::max)(1L, (std::min)(v, limit)); };
+    return SIZE{ clamp(desired.cx), clamp(desired.cy) };
+}

@@ -85,3 +85,9 @@ bool InkReaches(const RECT& dirty, float x, float y, float w, float h, const Ink
 // arc's anti-aliased edge is the only partial coverage, as the panel's
 // straight edges are pixel-aligned).
 bool AvoidsCorners(const RECT& r, SIZE panel, float radius);
+
+// The surface size a panel of `desired` size gets: each side within 1 and
+// `maxPx`, Direct2D's GetMaximumBitmapSize. A panel past that limit could not
+// get a bitmap at all and would never be drawn (#54); cut to it, it is drawn
+// with its far edge clipped, and the settings stay reachable from its menu.
+SIZE ClampToBitmapLimit(SIZE desired, UINT32 maxPx);
