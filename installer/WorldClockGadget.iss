@@ -31,6 +31,9 @@ PrivilegesRequiredOverridesAllowed=dialog
 ; Self-contained publish is win-x64.
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
+; Windows 10 1809, as README states. Time zones come from Windows' own
+; registry data (#49), so the 1903 icu.dll requirement no longer applies.
+MinVersion=10.0.17763
 ; Close a running gadget automatically on install/uninstall/upgrade.
 CloseApplications=yes
 RestartApplications=no
