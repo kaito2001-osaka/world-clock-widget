@@ -133,7 +133,11 @@ bool GadgetWindow::Create(HINSTANCE hInst) {
     // current state is sent right after registering.
     RegisterVisibilityNotifications();
     StartWatcher();
-    if (loaded.status != ConfigLoadStatus::Ok)
+    // Without a settings folder the load above reports Missing, which is
+    // silent, so this is the one place the user hears why nothing is saved.
+    if (!ConfigStorageAvailable())
+        ShowWarning(Ui().configDirUnavailable);
+    else if (loaded.status != ConfigLoadStatus::Ok)
         OnConfigLoadFailed(loaded.status);
     return true;
 }
@@ -453,6 +457,10 @@ void GadgetWindow::LaunchSettings() {
 // survives. A file that is there but unreadable is left alone: writing the
 // defaults over it would throw away every city the user can still fix.
 bool GadgetWindow::PersistToggle(bool Config::* field, bool value) {
+    if (!ConfigStorageAvailable()) {
+        ShowWarning(Ui().configDirUnavailable);
+        return false;
+    }
     const ConfigLoadResult onDisk = LoadConfig();
     std::optional<Config> base = BaseForEdit(onDisk, config_);
     if (!base) {
@@ -508,7 +516,15 @@ void GadgetWindow::ShowMenu() {
 }
 
 void GadgetWindow::StartWatcher() {
+    if (!ConfigStorageAvailable()) return;   // nothing to watch; Create says why
+    // Without the stop event every wait in the thread fails at once and the
+    // watcher spins, reopening the folder and re-reading config.json. Run
+    // without live reload instead.
     watchStop_ = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    if (!watchStop_) {
+        ShowWarning(Ui().liveReloadOff);
+        return;
+    }
     watchRun_.store(true);
     watchThread_ = std::thread(&GadgetWindow::WatchThreadProc, this);
 }
@@ -532,7 +548,9 @@ void GadgetWindow::WatchThreadProc() {
         WatchDirectory(afterFailure, failures);
         if (!watchRun_.load()) break;
         afterFailure = true;
-        if (WaitForSingleObject(watchStop_, WatchRetryDelayMs(failures++)) == WAIT_OBJECT_0)
+        // Only a timeout means "retry now". A failed wait returns at once, so
+        // treating it as a timeout would turn the backoff into a busy loop.
+        if (WaitForSingleObject(watchStop_, WatchRetryDelayMs(failures++)) != WAIT_TIMEOUT)
             break;
     }
 }

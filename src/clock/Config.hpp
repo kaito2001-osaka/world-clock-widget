@@ -55,7 +55,19 @@ struct WindowState {
     bool hasPosition = false;
 };
 
-// Returns %APPDATA%\WorldClockGadget\ (created if missing). Wide path.
+// The folder the settings live under: the roaming AppData known folder, or
+// %APPDATA% when that cannot be resolved. Each must be an absolute path
+// ("X:\..." or "\\server\..."); anything else is skipped. Empty when neither
+// is usable. A trailing separator is dropped. Pure, so it is unit testable.
+std::wstring ChooseAppDataDir(const std::wstring& knownFolder, const std::wstring& envAppData);
+
+// Whether there is a settings folder at all. Without one the gadget runs on
+// the defaults and reads and writes nothing (#56).
+bool ConfigStorageAvailable();
+
+// Returns %APPDATA%\WorldClockGadget\ (created if missing). Wide path. These
+// three return an empty string when !ConfigStorageAvailable(), and the
+// readers and writers below treat an empty path as "no file" / "cannot write".
 std::wstring ConfigDir();
 std::wstring ConfigPath();   // config.json
 std::wstring StatePath();    // state.json

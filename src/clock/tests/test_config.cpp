@@ -434,3 +434,43 @@ TEST(config_truncated_values_round_trip_unchanged) {
     CHECK(r.status == ConfigLoadStatus::Ok);
     CHECK(r.config == c);
 }
+
+// --- Where the settings folder comes from (#56) ---
+
+TEST(config_appdata_prefers_the_known_folder) {
+    CHECK(ChooseAppDataDir(L"C:\\Users\\a\\AppData\\Roaming", L"D:\\Other")
+          == L"C:\\Users\\a\\AppData\\Roaming");
+}
+
+TEST(config_appdata_falls_back_to_the_environment_variable) {
+    CHECK(ChooseAppDataDir(L"", L"D:\\Profiles\\a\\Roaming") == L"D:\\Profiles\\a\\Roaming");
+}
+
+TEST(config_appdata_is_empty_when_neither_is_set) {
+    CHECK(ChooseAppDataDir(L"", L"").empty());
+}
+
+TEST(config_appdata_rejects_relative_and_drive_relative_paths) {
+    // Each of these would land the folder somewhere that depends on the
+    // current directory or drive -- the drive root in the worst case.
+    CHECK(ChooseAppDataDir(L"", L"AppData").empty());
+    CHECK(ChooseAppDataDir(L"", L"\\AppData").empty());
+    CHECK(ChooseAppDataDir(L"", L"C:AppData").empty());
+    CHECK(ChooseAppDataDir(L"", L"\\\\").empty());
+    CHECK(ChooseAppDataDir(L"", L"\\\\\\x").empty());
+    CHECK(ChooseAppDataDir(L"", L"1:\\x").empty());
+    // A bad known folder is skipped in favour of a good variable.
+    CHECK(ChooseAppDataDir(L"Roaming", L"E:\\Roaming") == L"E:\\Roaming");
+}
+
+TEST(config_appdata_accepts_unc_and_forward_slashes) {
+    CHECK(ChooseAppDataDir(L"", L"\\\\server\\share\\a") == L"\\\\server\\share\\a");
+    CHECK(ChooseAppDataDir(L"", L"c:/Users/a/AppData/Roaming") == L"c:/Users/a/AppData/Roaming");
+}
+
+TEST(config_appdata_drops_trailing_separators) {
+    CHECK(ChooseAppDataDir(L"", L"D:\\Roaming\\") == L"D:\\Roaming");
+    CHECK(ChooseAppDataDir(L"", L"D:\\Roaming\\\\/") == L"D:\\Roaming");
+    // A bare root keeps no separator either, so "\WorldClockGadget" is appended once.
+    CHECK(ChooseAppDataDir(L"", L"D:\\") == L"D:");
+}

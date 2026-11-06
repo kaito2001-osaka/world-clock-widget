@@ -31,6 +31,9 @@ bool IsNotFound(DWORD err) {
 // we are mid-read instead of failing on a sharing violation.
 ReadResult ReadFileUtf8(const std::wstring& path, std::string& out) {
     out.clear();
+    // No settings folder (see ConfigStorageAvailable): there is nothing to
+    // read, and opening "" must not be left to whatever the API makes of it.
+    if (path.empty()) return ReadResult::Missing;
     HANDLE h = CreateFileW(path.c_str(), GENERIC_READ,
                            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
                            nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
@@ -69,6 +72,7 @@ bool IsTransientReplaceError(DWORD err) {
 }
 
 bool WriteFileAtomic(const std::wstring& path, const std::string& data) {
+    if (path.empty()) return false;   // no settings folder; write nowhere
     // Our own temp name: the settings app replaces through
     // "config.json.settings.tmp", so neither writer can clobber the other's.
     std::wstring tmp = path + L".gadget.tmp";
@@ -97,26 +101,59 @@ bool WriteFileAtomic(const std::wstring& path, const std::string& data) {
     return false;
 }
 
-// The roaming AppData folder, resolved on first use and then kept. It is the
-// gadget's only use of shell32, so after this the exe can unload it. Resolved
-// through the known-folder API rather than %APPDATA% because that is what the
-// settings app's Environment.GetFolderPath does; the two must agree.
+std::wstring EnvAppData() {
+    wchar_t buf[MAX_PATH];
+    const DWORD n = GetEnvironmentVariableW(L"APPDATA", buf, MAX_PATH);
+    return (n > 0 && n < MAX_PATH) ? std::wstring(buf, n) : std::wstring();
+}
+
+// The roaming AppData folder, resolved on first use and then kept, or empty
+// when there is none. It is the gadget's only use of shell32, so after this
+// the exe can unload it. The known-folder API comes first because that is what
+// the settings app's Environment.GetFolderPath uses; the two must agree.
+// %APPDATA% only stands in when that call fails.
 const std::wstring& RoamingAppData() {
     static const std::wstring dir = [] {
         PWSTR appdata = nullptr;
-        std::wstring d;
+        std::wstring known;
         if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_RoamingAppData, 0, nullptr, &appdata))) {
-            d = appdata;
-            CoTaskMemFree(appdata);
+            known = appdata;
         }
-        return d;
+        CoTaskMemFree(appdata);   // allocated even on failure; null is fine
+        return ChooseAppDataDir(known, EnvAppData());
     }();
     return dir;
 }
 
+bool IsAbsolutePath(const std::wstring& p) {
+    const auto isSep = [](wchar_t c) { return c == L'\\' || c == L'/'; };
+    if (p.size() >= 3 && ((p[0] >= L'A' && p[0] <= L'Z') || (p[0] >= L'a' && p[0] <= L'z')) &&
+        p[1] == L':' && isSep(p[2]))
+        return true;                                   // C:\...
+    return p.size() >= 3 && isSep(p[0]) && isSep(p[1]) && !isSep(p[2]);   // \\server\...
+}
+
 } // namespace
 
+std::wstring ChooseAppDataDir(const std::wstring& knownFolder, const std::wstring& envAppData) {
+    for (const std::wstring* candidate : { &knownFolder, &envAppData }) {
+        if (!IsAbsolutePath(*candidate)) continue;
+        std::wstring d = *candidate;
+        // Keep the root's separator ("C:\"), drop any other trailing one, so
+        // appending "\WorldClockGadget" never doubles it.
+        while (d.size() > 3 && (d.back() == L'\\' || d.back() == L'/')) d.pop_back();
+        if (d.size() == 3 && d[1] == L':') d.pop_back();
+        return d;
+    }
+    return {};
+}
+
+bool ConfigStorageAvailable() { return !RoamingAppData().empty(); }
+
 std::wstring ConfigDir() {
+    // Without AppData, "" + "\WorldClockGadget" would be a folder at the root of
+    // the current drive, which other users can write to. Use nothing instead.
+    if (!ConfigStorageAvailable()) return {};
     std::wstring dir = RoamingAppData() + L"\\WorldClockGadget";
     // On every call, not once: the folder can be deleted while we run, and the
     // writers and the watcher's reopen rely on getting it back here.
@@ -125,8 +162,14 @@ std::wstring ConfigDir() {
     return dir;
 }
 
-std::wstring ConfigPath() { return ConfigDir() + L"config.json"; }
-std::wstring StatePath()  { return ConfigDir() + L"state.json"; }
+// Empty, not a bare relative "config.json", when there is no folder.
+static std::wstring InConfigDir(const wchar_t* name) {
+    std::wstring dir = ConfigDir();
+    return dir.empty() ? dir : dir + name;
+}
+
+std::wstring ConfigPath() { return InConfigDir(L"config.json"); }
+std::wstring StatePath()  { return InConfigDir(L"state.json"); }
 
 Config DefaultConfig() {
     Config c;
@@ -272,7 +315,9 @@ bool WriteConfigFile(const std::wstring& path, const Config& c) {
 bool WriteConfigFull(const Config& c) { return WriteConfigFile(ConfigPath(), c); }
 
 bool WriteDefaultConfigIfMissing() {
-    if (GetFileAttributesW(ConfigPath().c_str()) != INVALID_FILE_ATTRIBUTES)
+    const std::wstring path = ConfigPath();
+    if (path.empty()) return false;   // no settings folder
+    if (GetFileAttributesW(path.c_str()) != INVALID_FILE_ATTRIBUTES)
         return true; // already exists
     if (!IsNotFound(GetLastError()))
         return false; // could not look; it may well exist, so never overwrite
