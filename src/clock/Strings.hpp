@@ -14,6 +14,10 @@ struct UiStrings {
     const wchar_t* configUnreadable;
     const wchar_t* configKeepingLast;
 
+    // Reported once at startup when a Win32 call the settings depend on failed.
+    const wchar_t* configDirUnavailable;   // no AppData folder to keep them in
+    const wchar_t* liveReloadOff;          // the config watcher could not start
+
     const wchar_t* settingsAppMissing;
 
     // A menu toggle could not be written to config.json.

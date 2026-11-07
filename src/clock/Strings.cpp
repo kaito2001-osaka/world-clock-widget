@@ -9,6 +9,12 @@ const UiStrings kUiJa = {
     L"読み込めるようになるまで、直前に読み込めた設定"
     L"（無い場合は既定の設定）で表示します。config.json は変更しません。",
 
+    L"設定の保存先 (AppData) フォルダが見つかりませんでした。\n"
+    L"既定の設定で表示します。config.json の読み込みと保存、"
+    L"位置の保存は行いません。",
+    L"config.json の変更を監視できませんでした。\n"
+    L"設定アプリで保存した変更は、ガジェットを再起動すると反映されます。",
+
     L"設定アプリ (WorldClockSettings.exe) が見つかりませんでした。\n"
     L"config.json を直接編集してください:\n"
     L"%APPDATA%\\WorldClockGadget\\config.json",
@@ -34,6 +40,12 @@ const UiStrings kUiEn = {
     L" (another app is using it, or access was denied).\n",
     L"Until it can be loaded, the last settings that loaded"
     L" (or the defaults, if none did) are shown. config.json is not changed.",
+
+    L"The settings folder (AppData) could not be found.\n"
+    L"The default settings are shown. config.json is not read or saved,"
+    L" and the window position is not saved.",
+    L"Changes to config.json could not be watched.\n"
+    L"Changes saved in the settings app take effect when the gadget restarts.",
 
     L"The settings app (WorldClockSettings.exe) was not found.\n"
     L"Edit config.json directly:\n"
