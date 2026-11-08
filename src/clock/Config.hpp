@@ -133,5 +133,15 @@ bool         WriteDefaultConfigIfMissing();
 bool         WriteConfigFile(const std::wstring& path, const Config& c);
 bool         WriteConfigFull(const Config& c);  // WriteConfigFile(ConfigPath(), c)
 
-WindowState  LoadState();
+// The largest |windowX| / |windowY| ParseState accepts. Real virtual desktops
+// span tens of thousands of pixels; past this bound adding the window size to
+// a coordinate could overflow int, which is undefined behaviour (#57).
+constexpr int kMaxSavedCoord = 1'000'000;
+
+// Parse state.json text. Pure (no file system), so it is unit testable. A
+// position counts as saved only when both coordinates are present and within
+// kMaxSavedCoord; otherwise hasPosition is false and the defaults stand.
+WindowState  ParseState(const std::string& text);
+
+WindowState  LoadState();            // ParseState of StatePath()'s contents
 bool         SaveState(const WindowState& s);
