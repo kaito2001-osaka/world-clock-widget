@@ -169,3 +169,11 @@ TEST(rescue_uses_the_real_window_size) {
     CHECK(to.has_value());
     CHECK_EQ(to->x, 1920L - 400L);   // the right edge lands on the work area edge
 }
+
+TEST(placement_rescues_a_window_at_the_saved_coordinate_bound) {
+    // The furthest position ParseState lets through (#57): adding the window
+    // size must not overflow, and the window must come back on screen.
+    RECT out = ClampToVisibleArea(Window(1'000'000, -1'000'000), kOneMonitor);
+    CHECK(IsSufficientlyVisible(out, kOneMonitor));
+    CHECK(Same(out, R(1920 - 240, 0, 1920, 200)));
+}

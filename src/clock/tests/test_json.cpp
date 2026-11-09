@@ -203,6 +203,21 @@ TEST(json_dump_formats_numbers_as_the_ostream_did) {
     }
 }
 
+TEST(json_dump_handles_numbers_outside_long_long) {
+    // Casting these to long long would be undefined behaviour (#57).
+    auto dumped = [](double d) { return json::dump(json::Value(d)); };
+    CHECK_EQ(dumped(std::numeric_limits<double>::quiet_NaN()), std::string("null\n"));
+    CHECK_EQ(dumped(std::numeric_limits<double>::infinity()), std::string("null\n"));
+    CHECK_EQ(dumped(-std::numeric_limits<double>::infinity()), std::string("null\n"));
+    CHECK_EQ(dumped(1e19), std::string("1e+19\n"));
+    CHECK_EQ(dumped(-1e19), std::string("-1e+19\n"));
+    CHECK_EQ(dumped(9223372036854775808.0), std::string("9.22337e+18\n"));   // 2^63
+    CHECK_EQ(dumped(1e300), std::string("1e+300\n"));
+    // The ends of the range still print as integers.
+    CHECK_EQ(dumped(9223372036854774784.0), std::string("9223372036854774784\n"));   // 2^63 - 1024
+    CHECK_EQ(dumped(-9223372036854775808.0), std::string("-9223372036854775808\n")); // -2^63
+}
+
 TEST(json_dump_escapes_specials) {
     json::Value v;
     v.set("s", std::string("a\"b\\c\nd\te"));

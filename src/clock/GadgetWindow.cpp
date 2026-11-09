@@ -249,10 +249,12 @@ LRESULT GadgetWindow::HandleMessage(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
             // On a failure the renderer keeps the old DPI's layout, which
             // still draws correctly, just at the old size.
             (void)renderer_.OnDpiChanged(dpi);
-            RECT* suggested = reinterpret_cast<RECT*>(lParam);
             // Move to the suggested origin; size follows from UpdateLayeredWindow.
-            SetWindowPos(hwnd, nullptr, suggested->left, suggested->top,
-                         0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+            // The system always passes a rect, but another process of the same
+            // user can send this message with lParam 0 (#57); then stay put.
+            if (const RECT* suggested = reinterpret_cast<const RECT*>(lParam))
+                SetWindowPos(hwnd, nullptr, suggested->left, suggested->top,
+                             0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
             RenderNow();
             return 0;
         }
@@ -566,7 +568,10 @@ void GadgetWindow::WatchDirectory(bool afterFailure, int& failures) {
     OVERLAPPED ov{};
     ov.hEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
     if (!ov.hEvent) { CloseHandle(h); return; }
-    BYTE buf[4096];
+    // ReadDirectoryChangesW requires a DWORD-aligned buffer, and
+    // ContainsConfigChange reads it as FILE_NOTIFY_INFORMATION records. A
+    // plain BYTE array is only 1-aligned (#57).
+    alignas(DWORD) BYTE buf[4096];
     bool pending = false;
     bool armed   = false;
 

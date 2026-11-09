@@ -474,3 +474,51 @@ TEST(config_appdata_drops_trailing_separators) {
     // A bare root keeps no separator either, so "\WorldClockGadget" is appended once.
     CHECK(ChooseAppDataDir(L"", L"D:\\") == L"D:");
 }
+
+// --- Reading state.json (#57) ---
+
+TEST(state_reads_a_saved_position) {
+    WindowState s = ParseState(R"({"windowX": -1700, "windowY": 240, "monitor": "\\\\.\\DISPLAY2"})");
+    CHECK(s.hasPosition);
+    CHECK_EQ(s.windowX, -1700);
+    CHECK_EQ(s.windowY, 240);
+    CHECK(s.monitor == "\\\\.\\DISPLAY2");
+}
+
+TEST(state_needs_both_coordinates) {
+    CHECK(!ParseState(R"({"windowX": 300})").hasPosition);
+    CHECK(!ParseState(R"({"windowY": 300})").hasPosition);
+    CHECK(!ParseState(R"({"windowX": "300", "windowY": 300})").hasPosition);
+}
+
+TEST(state_accepts_coordinates_at_the_bound) {
+    WindowState s = ParseState(R"({"windowX": 1000000, "windowY": -1000000})");
+    CHECK(s.hasPosition);
+    CHECK_EQ(s.windowX, kMaxSavedCoord);
+    CHECK_EQ(s.windowY, -kMaxSavedCoord);
+}
+
+TEST(state_rejects_coordinates_past_the_bound) {
+    // 2147483600 is the reported case: within int, but x + width overflows.
+    const char* cases[] = {
+        R"({"windowX": 1000001, "windowY": 0})",
+        R"({"windowX": 0, "windowY": -1000001})",
+        R"({"windowX": 2147483600, "windowY": 80})",
+        R"({"windowX": -2147483648, "windowY": 80})",
+        R"({"windowX": 1e300, "windowY": 80})",
+    };
+    for (const char* text : cases) {
+        WindowState s = ParseState(text);
+        CHECK(!s.hasPosition);
+        CHECK_EQ(s.windowX, WindowState{}.windowX);
+        CHECK_EQ(s.windowY, WindowState{}.windowY);
+    }
+}
+
+TEST(state_malformed_text_gives_the_defaults) {
+    for (const char* text : { "", "{ not json", "[1, 2]", "42" }) {
+        WindowState s = ParseState(text);
+        CHECK(!s.hasPosition);
+        CHECK(s.monitor.empty());
+    }
+}

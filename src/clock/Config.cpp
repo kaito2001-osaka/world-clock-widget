@@ -3,6 +3,7 @@
 
 #include <windows.h>
 #include <shlobj.h>
+#include <climits>
 
 #pragma comment(lib, "shell32.lib")
 
@@ -324,24 +325,35 @@ bool WriteDefaultConfigIfMissing() {
     return WriteConfigFull(DefaultConfig());
 }
 
-WindowState LoadState() {
+WindowState ParseState(const std::string& text) {
     WindowState st;
-    std::string text;
-    if (ReadFileUtf8(StatePath(), text) != ReadResult::Ok) return st;
     try {
         json::Value root = json::parse(text);
         if (!root.isObject()) return st;
+        st.monitor = root.getString("monitor", "");
         // Only treat this as a saved position when both coordinates are
         // really there; getInt would otherwise hand back its own default and
         // we would restore to a position nobody ever saved.
         const json::Value* px = root.find("windowX");
         const json::Value* py = root.find("windowY");
-        st.windowX = root.getInt("windowX", st.windowX);
-        st.windowY = root.getInt("windowY", st.windowY);
-        st.monitor = root.getString("monitor", "");
-        st.hasPosition = px && py;
+        if (!px || !py) return st;
+        // INT_MIN cannot be a saved coordinate here, so it marks "not an
+        // in-range number" without a second lookup.
+        const int x = root.getInt("windowX", INT_MIN);
+        const int y = root.getInt("windowY", INT_MIN);
+        auto inRange = [](int v) { return v >= -kMaxSavedCoord && v <= kMaxSavedCoord; };
+        if (!inRange(x) || !inRange(y)) return st;
+        st.windowX = x;
+        st.windowY = y;
+        st.hasPosition = true;
     } catch (...) {}
     return st;
+}
+
+WindowState LoadState() {
+    std::string text;
+    if (ReadFileUtf8(StatePath(), text) != ReadResult::Ok) return WindowState{};
+    return ParseState(text);
 }
 
 bool SaveState(const WindowState& s) {

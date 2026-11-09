@@ -7,6 +7,7 @@
 #include <vector>
 #include <map>
 #include <memory>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <stdexcept>
@@ -312,10 +313,16 @@ inline void write(std::string& o, const Value& v, int indent = 0) {
         case Type::Null:   o += "null"; break;
         case Type::Bool:   o += v.b ? "true" : "false"; break;
         case Type::Number: {
+            // JSON has no NaN or infinity, so those are written as null.
+            if (!std::isfinite(v.num)) { o += "null"; break; }
             // Integer-valued numbers print without decimals. The rest use
             // "%.6g", which is what the ostream this replaced printed through.
+            // Casting a double outside long long is undefined behaviour, so
+            // the cast is only tried inside [-2^63, 2^63) (#57).
             char buf[32];
-            int n = (v.num == (long long)v.num)
+            const bool fitsLongLong = v.num >= -9223372036854775808.0 &&
+                                      v.num <  9223372036854775808.0;
+            int n = (fitsLongLong && v.num == (double)(long long)v.num)
                   ? std::snprintf(buf, sizeof(buf), "%lld", (long long)v.num)
                   : std::snprintf(buf, sizeof(buf), "%.6g", v.num);
             if (n > 0) o.append(buf, (size_t)n);
