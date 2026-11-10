@@ -3,6 +3,7 @@ add_executable(WorldClockTests
     test_framework.cpp
     test_benchstats.cpp
     test_config.cpp
+    test_config_parity.cpp
     test_configwatch.cpp
     test_json.cpp
     test_panellayout.cpp
@@ -18,6 +19,8 @@ add_executable(WorldClockTests
 )
 
 target_link_libraries(WorldClockTests PRIVATE worldclock_core)
+target_compile_definitions(WorldClockTests PRIVATE
+    CONFIG_PARSING_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/../../../tests/fixtures/config-parsing.json")
 
 if (MSVC)
     target_compile_options(WorldClockTests PRIVATE /W4 /permissive- /utf-8 /EHsc)

@@ -69,8 +69,13 @@ public static class Strings
 
     // ---- Messages ----
     public static string ConfigInvalid => T(
-        "config.json に構文エラーがあるため、読み込めませんでした。",
-        "config.json could not be loaded because it has a syntax error.");
+        "config.json に構文エラーがあるか、ルートがオブジェクトではないため、読み込めませんでした。",
+        "config.json could not be loaded because it has a syntax error or its root is not an object.");
+    public static string ConfigCorrected(string fields, string backupPath) => T(
+        $"config.json の次の項目は型または値が不正なため、既定値に戻すか読み飛ばしました:\n{fields}\n\n" +
+        $"他の設定は読み込まれています。保存前のファイルは次の場所に残します:\n{backupPath}",
+        $"These config.json fields have an invalid type or value and were defaulted or skipped:\n{fields}\n\n" +
+        $"The other settings were loaded. Before saving, the previous file is kept here:\n{backupPath}");
     public static string ConfigUnreadable => T(
         "config.json を読み込めませんでした（他のアプリが使用中か、アクセスが拒否されています）。\n" +
         "いったん閉じて開き直すと、読み込めることがあります。",

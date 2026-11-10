@@ -1,0 +1,910 @@
+[
+  {
+    "name": "defaults",
+    "input": "{}",
+    "accepted": true,
+    "expected": {
+      "cities": [
+        {
+          "label": "Tokyo",
+          "tz": "Asia/Tokyo"
+        },
+        {
+          "label": "Portland",
+          "tz": "America/Los_Angeles"
+        },
+        {
+          "label": "London",
+          "tz": "Europe/London"
+        },
+        {
+          "label": "New York",
+          "tz": "America/New_York"
+        }
+      ],
+      "displayMode": "digital",
+      "layout": "vertical",
+      "hourFormat": 24,
+      "showDate": true,
+      "dateFormat": "ddd, MMM d",
+      "showSeconds": false,
+      "size": "medium",
+      "opacity": 85,
+      "alwaysOnTop": false,
+      "lockPosition": false,
+      "launchAtStartup": false,
+      "theme": "dark"
+    },
+    "warnings": []
+  },
+  {
+    "name": "fraction preserves cities",
+    "input": "{\"cities\":[{\"label\":\"Osaka\",\"tz\":\"Asia/Tokyo\"}],\"opacity\":85.5}",
+    "accepted": true,
+    "expected": {
+      "cities": [
+        {
+          "label": "Osaka",
+          "tz": "Asia/Tokyo"
+        }
+      ],
+      "displayMode": "digital",
+      "layout": "vertical",
+      "hourFormat": 24,
+      "showDate": true,
+      "dateFormat": "ddd, MMM d",
+      "showSeconds": false,
+      "size": "medium",
+      "opacity": 85,
+      "alwaysOnTop": false,
+      "lockPosition": false,
+      "launchAtStartup": false,
+      "theme": "dark"
+    },
+    "warnings": []
+  },
+  {
+    "name": "wrong boolean preserves cities",
+    "input": "{\"cities\":[{\"label\":\"Osaka\",\"tz\":\"Asia/Tokyo\"}],\"showDate\":\"yes\"}",
+    "accepted": true,
+    "expected": {
+      "cities": [
+        {
+          "label": "Osaka",
+          "tz": "Asia/Tokyo"
+        }
+      ],
+      "displayMode": "digital",
+      "layout": "vertical",
+      "hourFormat": 24,
+      "showDate": true,
+      "dateFormat": "ddd, MMM d",
+      "showSeconds": false,
+      "size": "medium",
+      "opacity": 85,
+      "alwaysOnTop": false,
+      "lockPosition": false,
+      "launchAtStartup": false,
+      "theme": "dark"
+    },
+    "warnings": [
+      "showDate"
+    ]
+  },
+  {
+    "name": "first duplicate wins",
+    "input": "{\"cities\":[{\"label\":\"Osaka\",\"tz\":\"Asia/Tokyo\"}],\"opacity\":42,\"opacity\":99,\"showDate\":false,\"showDate\":true}",
+    "accepted": true,
+    "expected": {
+      "cities": [
+        {
+          "label": "Osaka",
+          "tz": "Asia/Tokyo"
+        }
+      ],
+      "displayMode": "digital",
+      "layout": "vertical",
+      "hourFormat": 24,
+      "showDate": false,
+      "dateFormat": "ddd, MMM d",
+      "showSeconds": false,
+      "size": "medium",
+      "opacity": 42,
+      "alwaysOnTop": false,
+      "lockPosition": false,
+      "launchAtStartup": false,
+      "theme": "dark"
+    },
+    "warnings": []
+  },
+  {
+    "name": "first mistyped duplicate wins",
+    "input": "{\"cities\":[{\"label\":\"Osaka\",\"tz\":\"Asia/Tokyo\"}],\"opacity\":\"bad\",\"opacity\":99}",
+    "accepted": true,
+    "expected": {
+      "cities": [
+        {
+          "label": "Osaka",
+          "tz": "Asia/Tokyo"
+        }
+      ],
+      "displayMode": "digital",
+      "layout": "vertical",
+      "hourFormat": 24,
+      "showDate": true,
+      "dateFormat": "ddd, MMM d",
+      "showSeconds": false,
+      "size": "medium",
+      "opacity": 85,
+      "alwaysOnTop": false,
+      "lockPosition": false,
+      "launchAtStartup": false,
+      "theme": "dark"
+    },
+    "warnings": [
+      "opacity"
+    ]
+  },
+  {
+    "name": "nested duplicates",
+    "input": "{\"cities\":[{\"label\":\"First\",\"label\":\"Last\",\"tz\":\"Asia/Tokyo\",\"tz\":\"Europe/London\"}]}",
+    "accepted": true,
+    "expected": {
+      "cities": [
+        {
+          "label": "First",
+          "tz": "Asia/Tokyo"
+        }
+      ],
+      "displayMode": "digital",
+      "layout": "vertical",
+      "hourFormat": 24,
+      "showDate": true,
+      "dateFormat": "ddd, MMM d",
+      "showSeconds": false,
+      "size": "medium",
+      "opacity": 85,
+      "alwaysOnTop": false,
+      "lockPosition": false,
+      "launchAtStartup": false,
+      "theme": "dark"
+    },
+    "warnings": []
+  },
+  {
+    "name": "leading zero",
+    "input": "{\"hourFormat\":012}",
+    "accepted": false
+  },
+  {
+    "name": "negative leading zero",
+    "input": "{\"hourFormat\":-012}",
+    "accepted": false
+  },
+  {
+    "name": "missing exponent",
+    "input": "{\"hourFormat\":1e}",
+    "accepted": false
+  },
+  {
+    "name": "missing signed exponent",
+    "input": "{\"hourFormat\":1e+}",
+    "accepted": false
+  },
+  {
+    "name": "missing fraction",
+    "input": "{\"hourFormat\":1.}",
+    "accepted": false
+  },
+  {
+    "name": "missing integer",
+    "input": "{\"hourFormat\":.5}",
+    "accepted": false
+  },
+  {
+    "name": "negative missing integer",
+    "input": "{\"hourFormat\":-.5}",
+    "accepted": false
+  },
+  {
+    "name": "plus sign",
+    "input": "{\"hourFormat\":+1}",
+    "accepted": false
+  },
+  {
+    "name": "raw tab",
+    "input": "{\"cities\":[{\"label\":\"a\tb\",\"tz\":\"Asia/Tokyo\"}]}",
+    "accepted": false
+  },
+  {
+    "name": "raw newline",
+    "input": "{\"cities\":[{\"label\":\"a\nb\",\"tz\":\"Asia/Tokyo\"}]}",
+    "accepted": false
+  },
+  {
+    "name": "raw control",
+    "input": "{\"cities\":[{\"label\":\"a\u0001b\",\"tz\":\"Asia/Tokyo\"}]}",
+    "accepted": false
+  },
+  {
+    "name": "escaped controls",
+    "input": "{\"cities\": [{\"label\": \"a\\tb\\nc\", \"tz\": \"Asia/Tokyo\"}]}",
+    "accepted": true,
+    "expected": {
+      "cities": [
+        {
+          "label": "a\tb\nc",
+          "tz": "Asia/Tokyo"
+        }
+      ],
+      "displayMode": "digital",
+      "layout": "vertical",
+      "hourFormat": 24,
+      "showDate": true,
+      "dateFormat": "ddd, MMM d",
+      "showSeconds": false,
+      "size": "medium",
+      "opacity": 85,
+      "alwaysOnTop": false,
+      "lockPosition": false,
+      "launchAtStartup": false,
+      "theme": "dark"
+    },
+    "warnings": []
+  },
+  {
+    "name": "trailing comma",
+    "input": "{\"opacity\":42,}",
+    "accepted": false
+  },
+  {
+    "name": "trailing text",
+    "input": "{}junk",
+    "accepted": false
+  },
+  {
+    "name": "array root",
+    "input": "[]",
+    "accepted": false
+  },
+  {
+    "name": "null root",
+    "input": "null",
+    "accepted": false
+  },
+  {
+    "name": "empty",
+    "input": "",
+    "accepted": false
+  },
+  {
+    "name": "below minimum",
+    "input": "{\"cities\":[{\"label\":\"Osaka\",\"tz\":\"Asia/Tokyo\"}],\"opacity\":-2147483649}",
+    "accepted": true,
+    "expected": {
+      "cities": [
+        {
+          "label": "Osaka",
+          "tz": "Asia/Tokyo"
+        }
+      ],
+      "displayMode": "digital",
+      "layout": "vertical",
+      "hourFormat": 24,
+      "showDate": true,
+      "dateFormat": "ddd, MMM d",
+      "showSeconds": false,
+      "size": "medium",
+      "opacity": 85,
+      "alwaysOnTop": false,
+      "lockPosition": false,
+      "launchAtStartup": false,
+      "theme": "dark"
+    },
+    "warnings": [
+      "opacity"
+    ]
+  },
+  {
+    "name": "negative fractional int boundary",
+    "input": "{\"cities\":[{\"label\":\"Osaka\",\"tz\":\"Asia/Tokyo\"}],\"opacity\":-2147483648.5}",
+    "accepted": true,
+    "expected": {
+      "cities": [
+        {
+          "label": "Osaka",
+          "tz": "Asia/Tokyo"
+        }
+      ],
+      "displayMode": "digital",
+      "layout": "vertical",
+      "hourFormat": 24,
+      "showDate": true,
+      "dateFormat": "ddd, MMM d",
+      "showSeconds": false,
+      "size": "medium",
+      "opacity": 10,
+      "alwaysOnTop": false,
+      "lockPosition": false,
+      "launchAtStartup": false,
+      "theme": "dark"
+    },
+    "warnings": []
+  },
+  {
+    "name": "maximum int",
+    "input": "{\"cities\":[{\"label\":\"Osaka\",\"tz\":\"Asia/Tokyo\"}],\"opacity\":2147483647}",
+    "accepted": true,
+    "expected": {
+      "cities": [
+        {
+          "label": "Osaka",
+          "tz": "Asia/Tokyo"
+        }
+      ],
+      "displayMode": "digital",
+      "layout": "vertical",
+      "hourFormat": 24,
+      "showDate": true,
+      "dateFormat": "ddd, MMM d",
+      "showSeconds": false,
+      "size": "medium",
+      "opacity": 100,
+      "alwaysOnTop": false,
+      "lockPosition": false,
+      "launchAtStartup": false,
+      "theme": "dark"
+    },
+    "warnings": []
+  },
+  {
+    "name": "fractional maximum int",
+    "input": "{\"cities\":[{\"label\":\"Osaka\",\"tz\":\"Asia/Tokyo\"}],\"opacity\":2147483647.5}",
+    "accepted": true,
+    "expected": {
+      "cities": [
+        {
+          "label": "Osaka",
+          "tz": "Asia/Tokyo"
+        }
+      ],
+      "displayMode": "digital",
+      "layout": "vertical",
+      "hourFormat": 24,
+      "showDate": true,
+      "dateFormat": "ddd, MMM d",
+      "showSeconds": false,
+      "size": "medium",
+      "opacity": 100,
+      "alwaysOnTop": false,
+      "lockPosition": false,
+      "launchAtStartup": false,
+      "theme": "dark"
+    },
+    "warnings": []
+  },
+  {
+    "name": "above maximum",
+    "input": "{\"cities\":[{\"label\":\"Osaka\",\"tz\":\"Asia/Tokyo\"}],\"opacity\":2147483648}",
+    "accepted": true,
+    "expected": {
+      "cities": [
+        {
+          "label": "Osaka",
+          "tz": "Asia/Tokyo"
+        }
+      ],
+      "displayMode": "digital",
+      "layout": "vertical",
+      "hourFormat": 24,
+      "showDate": true,
+      "dateFormat": "ddd, MMM d",
+      "showSeconds": false,
+      "size": "medium",
+      "opacity": 85,
+      "alwaysOnTop": false,
+      "lockPosition": false,
+      "launchAtStartup": false,
+      "theme": "dark"
+    },
+    "warnings": [
+      "opacity"
+    ]
+  },
+  {
+    "name": "large finite",
+    "input": "{\"cities\":[{\"label\":\"Osaka\",\"tz\":\"Asia/Tokyo\"}],\"opacity\":1e100}",
+    "accepted": true,
+    "expected": {
+      "cities": [
+        {
+          "label": "Osaka",
+          "tz": "Asia/Tokyo"
+        }
+      ],
+      "displayMode": "digital",
+      "layout": "vertical",
+      "hourFormat": 24,
+      "showDate": true,
+      "dateFormat": "ddd, MMM d",
+      "showSeconds": false,
+      "size": "medium",
+      "opacity": 85,
+      "alwaysOnTop": false,
+      "lockPosition": false,
+      "launchAtStartup": false,
+      "theme": "dark"
+    },
+    "warnings": [
+      "opacity"
+    ]
+  },
+  {
+    "name": "lower clamp",
+    "input": "{\"cities\":[{\"label\":\"Osaka\",\"tz\":\"Asia/Tokyo\"}],\"opacity\":0}",
+    "accepted": true,
+    "expected": {
+      "cities": [
+        {
+          "label": "Osaka",
+          "tz": "Asia/Tokyo"
+        }
+      ],
+      "displayMode": "digital",
+      "layout": "vertical",
+      "hourFormat": 24,
+      "showDate": true,
+      "dateFormat": "ddd, MMM d",
+      "showSeconds": false,
+      "size": "medium",
+      "opacity": 10,
+      "alwaysOnTop": false,
+      "lockPosition": false,
+      "launchAtStartup": false,
+      "theme": "dark"
+    },
+    "warnings": []
+  },
+  {
+    "name": "upper clamp",
+    "input": "{\"cities\":[{\"label\":\"Osaka\",\"tz\":\"Asia/Tokyo\"}],\"opacity\":101}",
+    "accepted": true,
+    "expected": {
+      "cities": [
+        {
+          "label": "Osaka",
+          "tz": "Asia/Tokyo"
+        }
+      ],
+      "displayMode": "digital",
+      "layout": "vertical",
+      "hourFormat": 24,
+      "showDate": true,
+      "dateFormat": "ddd, MMM d",
+      "showSeconds": false,
+      "size": "medium",
+      "opacity": 100,
+      "alwaysOnTop": false,
+      "lockPosition": false,
+      "launchAtStartup": false,
+      "theme": "dark"
+    },
+    "warnings": []
+  },
+  {
+    "name": "all wrong types",
+    "input": "{\"cities\": [{\"label\": \"Osaka\", \"tz\": \"Asia/Tokyo\"}], \"displayMode\": 3, \"layout\": false, \"hourFormat\": [], \"showDate\": 1, \"dateFormat\": null, \"showSeconds\": \"false\", \"size\": {}, \"opacity\": null, \"alwaysOnTop\": 0, \"lockPosition\": \"true\", \"launchAtStartup\": [], \"theme\": 1}",
+    "accepted": true,
+    "expected": {
+      "cities": [
+        {
+          "label": "Osaka",
+          "tz": "Asia/Tokyo"
+        }
+      ],
+      "displayMode": "digital",
+      "layout": "vertical",
+      "hourFormat": 24,
+      "showDate": true,
+      "dateFormat": "ddd, MMM d",
+      "showSeconds": false,
+      "size": "medium",
+      "opacity": 85,
+      "alwaysOnTop": false,
+      "lockPosition": false,
+      "launchAtStartup": false,
+      "theme": "dark"
+    },
+    "warnings": [
+      "displayMode",
+      "layout",
+      "hourFormat",
+      "showDate",
+      "dateFormat",
+      "showSeconds",
+      "size",
+      "opacity",
+      "alwaysOnTop",
+      "lockPosition",
+      "launchAtStartup",
+      "theme"
+    ]
+  },
+  {
+    "name": "city filtering",
+    "input": "{\"cities\":[null,5,{}, {\"tz\":3},{\"label\":null,\"tz\":\"Asia/Tokyo\"},{\"label\":\"Bad\",\"tz\":\"\"}]}",
+    "accepted": true,
+    "expected": {
+      "cities": [
+        {
+          "label": "",
+          "tz": "Asia/Tokyo"
+        }
+      ],
+      "displayMode": "digital",
+      "layout": "vertical",
+      "hourFormat": 24,
+      "showDate": true,
+      "dateFormat": "ddd, MMM d",
+      "showSeconds": false,
+      "size": "medium",
+      "opacity": 85,
+      "alwaysOnTop": false,
+      "lockPosition": false,
+      "launchAtStartup": false,
+      "theme": "dark"
+    },
+    "warnings": [
+      "cities[0]",
+      "cities[1]",
+      "cities[2].tz",
+      "cities[3].tz",
+      "cities[4].label",
+      "cities[5].tz"
+    ]
+  },
+  {
+    "name": "null cities",
+    "input": "{\"cities\":null}",
+    "accepted": true,
+    "expected": {
+      "cities": [
+        {
+          "label": "Tokyo",
+          "tz": "Asia/Tokyo"
+        },
+        {
+          "label": "Portland",
+          "tz": "America/Los_Angeles"
+        },
+        {
+          "label": "London",
+          "tz": "Europe/London"
+        },
+        {
+          "label": "New York",
+          "tz": "America/New_York"
+        }
+      ],
+      "displayMode": "digital",
+      "layout": "vertical",
+      "hourFormat": 24,
+      "showDate": true,
+      "dateFormat": "ddd, MMM d",
+      "showSeconds": false,
+      "size": "medium",
+      "opacity": 85,
+      "alwaysOnTop": false,
+      "lockPosition": false,
+      "launchAtStartup": false,
+      "theme": "dark"
+    },
+    "warnings": [
+      "cities"
+    ]
+  },
+  {
+    "name": "empty cities",
+    "input": "{\"cities\":[]}",
+    "accepted": true,
+    "expected": {
+      "cities": [
+        {
+          "label": "Tokyo",
+          "tz": "Asia/Tokyo"
+        },
+        {
+          "label": "Portland",
+          "tz": "America/Los_Angeles"
+        },
+        {
+          "label": "London",
+          "tz": "Europe/London"
+        },
+        {
+          "label": "New York",
+          "tz": "America/New_York"
+        }
+      ],
+      "displayMode": "digital",
+      "layout": "vertical",
+      "hourFormat": 24,
+      "showDate": true,
+      "dateFormat": "ddd, MMM d",
+      "showSeconds": false,
+      "size": "medium",
+      "opacity": 85,
+      "alwaysOnTop": false,
+      "lockPosition": false,
+      "launchAtStartup": false,
+      "theme": "dark"
+    },
+    "warnings": []
+  },
+  {
+    "name": "unknown enums and empty date",
+    "input": "{\"displayMode\":\"bad\",\"layout\":\"bad\",\"size\":\"bad\",\"hourFormat\":12.9,\"dateFormat\":\"\"}",
+    "accepted": true,
+    "expected": {
+      "cities": [
+        {
+          "label": "Tokyo",
+          "tz": "Asia/Tokyo"
+        },
+        {
+          "label": "Portland",
+          "tz": "America/Los_Angeles"
+        },
+        {
+          "label": "London",
+          "tz": "Europe/London"
+        },
+        {
+          "label": "New York",
+          "tz": "America/New_York"
+        }
+      ],
+      "displayMode": "digital",
+      "layout": "vertical",
+      "hourFormat": 12,
+      "showDate": true,
+      "dateFormat": "ddd, MMM d",
+      "showSeconds": false,
+      "size": "medium",
+      "opacity": 85,
+      "alwaysOnTop": false,
+      "lockPosition": false,
+      "launchAtStartup": false,
+      "theme": "dark"
+    },
+    "warnings": []
+  },
+  {
+    "name": "full config",
+    "input": "{\"cities\": [{\"label\": \"Osaka\", \"tz\": \"Asia/Tokyo\"}], \"displayMode\": \"analog\", \"layout\": \"horizontal\", \"hourFormat\": 12, \"showDate\": false, \"dateFormat\": \"yyyy-MM-dd\", \"showSeconds\": true, \"size\": \"large\", \"opacity\": 40, \"alwaysOnTop\": true, \"lockPosition\": true, \"launchAtStartup\": true, \"theme\": \"light\"}",
+    "accepted": true,
+    "expected": {
+      "cities": [
+        {
+          "label": "Osaka",
+          "tz": "Asia/Tokyo"
+        }
+      ],
+      "displayMode": "analog",
+      "layout": "horizontal",
+      "hourFormat": 12,
+      "showDate": false,
+      "dateFormat": "yyyy-MM-dd",
+      "showSeconds": true,
+      "size": "large",
+      "opacity": 40,
+      "alwaysOnTop": true,
+      "lockPosition": true,
+      "launchAtStartup": true,
+      "theme": "light"
+    },
+    "warnings": []
+  },
+  {
+    "name": "label code point limit 37",
+    "input": "{\"cities\": [{\"label\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\", \"tz\": \"Asia/Tokyo\"}], \"dateFormat\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}",
+    "accepted": true,
+    "expected": {
+      "cities": [
+        {
+          "label": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "tz": "Asia/Tokyo"
+        }
+      ],
+      "displayMode": "digital",
+      "layout": "vertical",
+      "hourFormat": 24,
+      "showDate": true,
+      "dateFormat": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "showSeconds": false,
+      "size": "medium",
+      "opacity": 85,
+      "alwaysOnTop": false,
+      "lockPosition": false,
+      "launchAtStartup": false,
+      "theme": "dark"
+    },
+    "warnings": []
+  },
+  {
+    "name": "label code point limit 38",
+    "input": "{\"cities\": [{\"label\": \"\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\", \"tz\": \"Asia/Tokyo\"}], \"dateFormat\": \"\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\\ud83d\\uddfc\"}",
+    "accepted": true,
+    "expected": {
+      "cities": [
+        {
+          "label": "\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc",
+          "tz": "Asia/Tokyo"
+        }
+      ],
+      "displayMode": "digital",
+      "layout": "vertical",
+      "hourFormat": 24,
+      "showDate": true,
+      "dateFormat": "\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc\ud83d\uddfc",
+      "showSeconds": false,
+      "size": "medium",
+      "opacity": 85,
+      "alwaysOnTop": false,
+      "lockPosition": false,
+      "launchAtStartup": false,
+      "theme": "dark"
+    },
+    "warnings": []
+  },
+  {
+    "name": "city count limit",
+    "input": "{\"cities\": [{\"label\": \"0\", \"tz\": \"Asia/Tokyo\"}, {\"label\": \"1\", \"tz\": \"Asia/Tokyo\"}, {\"label\": \"2\", \"tz\": \"Asia/Tokyo\"}, {\"label\": \"3\", \"tz\": \"Asia/Tokyo\"}, {\"label\": \"4\", \"tz\": \"Asia/Tokyo\"}, {\"label\": \"5\", \"tz\": \"Asia/Tokyo\"}, {\"label\": \"6\", \"tz\": \"Asia/Tokyo\"}, {\"label\": \"7\", \"tz\": \"Asia/Tokyo\"}, {\"label\": \"8\", \"tz\": \"Asia/Tokyo\"}, {\"label\": \"9\", \"tz\": \"Asia/Tokyo\"}, {\"label\": \"10\", \"tz\": \"Asia/Tokyo\"}, {\"label\": \"11\", \"tz\": \"Asia/Tokyo\"}, {\"label\": \"12\", \"tz\": \"Asia/Tokyo\"}, {\"label\": \"13\", \"tz\": \"Asia/Tokyo\"}, {\"label\": \"14\", \"tz\": \"Asia/Tokyo\"}, {\"label\": \"15\", \"tz\": \"Asia/Tokyo\"}, {\"label\": \"16\", \"tz\": \"Asia/Tokyo\"}, {\"label\": \"17\", \"tz\": \"Asia/Tokyo\"}, {\"label\": \"18\", \"tz\": \"Asia/Tokyo\"}, {\"label\": \"19\", \"tz\": \"Asia/Tokyo\"}, {\"label\": \"20\", \"tz\": \"Asia/Tokyo\"}, {\"label\": \"21\", \"tz\": \"Asia/Tokyo\"}, {\"label\": \"22\", \"tz\": \"Asia/Tokyo\"}, {\"label\": \"23\", \"tz\": \"Asia/Tokyo\"}, {\"label\": \"24\", \"tz\": \"Asia/Tokyo\"}, {\"label\": \"25\", \"tz\": \"Asia/Tokyo\"}, {\"label\": \"26\", \"tz\": \"Asia/Tokyo\"}, {\"label\": \"27\", \"tz\": \"Asia/Tokyo\"}, {\"label\": \"28\", \"tz\": \"Asia/Tokyo\"}, {\"label\": \"29\", \"tz\": \"Asia/Tokyo\"}, {\"label\": \"30\", \"tz\": \"Asia/Tokyo\"}, {\"label\": \"31\", \"tz\": \"Asia/Tokyo\"}, {\"label\": \"32\", \"tz\": \"Asia/Tokyo\"}]}",
+    "accepted": true,
+    "expected": {
+      "cities": [
+        {
+          "label": "0",
+          "tz": "Asia/Tokyo"
+        },
+        {
+          "label": "1",
+          "tz": "Asia/Tokyo"
+        },
+        {
+          "label": "2",
+          "tz": "Asia/Tokyo"
+        },
+        {
+          "label": "3",
+          "tz": "Asia/Tokyo"
+        },
+        {
+          "label": "4",
+          "tz": "Asia/Tokyo"
+        },
+        {
+          "label": "5",
+          "tz": "Asia/Tokyo"
+        },
+        {
+          "label": "6",
+          "tz": "Asia/Tokyo"
+        },
+        {
+          "label": "7",
+          "tz": "Asia/Tokyo"
+        },
+        {
+          "label": "8",
+          "tz": "Asia/Tokyo"
+        },
+        {
+          "label": "9",
+          "tz": "Asia/Tokyo"
+        },
+        {
+          "label": "10",
+          "tz": "Asia/Tokyo"
+        },
+        {
+          "label": "11",
+          "tz": "Asia/Tokyo"
+        },
+        {
+          "label": "12",
+          "tz": "Asia/Tokyo"
+        },
+        {
+          "label": "13",
+          "tz": "Asia/Tokyo"
+        },
+        {
+          "label": "14",
+          "tz": "Asia/Tokyo"
+        },
+        {
+          "label": "15",
+          "tz": "Asia/Tokyo"
+        },
+        {
+          "label": "16",
+          "tz": "Asia/Tokyo"
+        },
+        {
+          "label": "17",
+          "tz": "Asia/Tokyo"
+        },
+        {
+          "label": "18",
+          "tz": "Asia/Tokyo"
+        },
+        {
+          "label": "19",
+          "tz": "Asia/Tokyo"
+        },
+        {
+          "label": "20",
+          "tz": "Asia/Tokyo"
+        },
+        {
+          "label": "21",
+          "tz": "Asia/Tokyo"
+        },
+        {
+          "label": "22",
+          "tz": "Asia/Tokyo"
+        },
+        {
+          "label": "23",
+          "tz": "Asia/Tokyo"
+        },
+        {
+          "label": "24",
+          "tz": "Asia/Tokyo"
+        },
+        {
+          "label": "25",
+          "tz": "Asia/Tokyo"
+        },
+        {
+          "label": "26",
+          "tz": "Asia/Tokyo"
+        },
+        {
+          "label": "27",
+          "tz": "Asia/Tokyo"
+        },
+        {
+          "label": "28",
+          "tz": "Asia/Tokyo"
+        },
+        {
+          "label": "29",
+          "tz": "Asia/Tokyo"
+        },
+        {
+          "label": "30",
+          "tz": "Asia/Tokyo"
+        },
+        {
+          "label": "31",
+          "tz": "Asia/Tokyo"
+        }
+      ],
+      "displayMode": "digital",
+      "layout": "vertical",
+      "hourFormat": 24,
+      "showDate": true,
+      "dateFormat": "ddd, MMM d",
+      "showSeconds": false,
+      "size": "medium",
+      "opacity": 85,
+      "alwaysOnTop": false,
+      "lockPosition": false,
+      "launchAtStartup": false,
+      "theme": "dark"
+    },
+    "warnings": []
+  }
+]

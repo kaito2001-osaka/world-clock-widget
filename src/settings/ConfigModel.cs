@@ -44,11 +44,13 @@ public sealed class ConfigModel
 
     // The gadget's limits (kMaxLabelChars and friends in Config.hpp): it sizes
     // its panel from the longest strings of every city, so nothing longer or
-    // more may reach it (#54). Lengths count UTF-16 units here and code points
-    // there, so a value that fits here always fits there.
+    // more may reach it (#54). File parsing counts code points like the gadget;
+    // the editor's UTF-16 limit is conservatively no larger.
     public const int MaxLabelLength = 64;
     public const int MaxDateFormatLength = 64;
     public const int MaxCities = 32;
+
+    [JsonIgnore] public List<string> CorrectedFields { get; } = new();
 
     private static readonly JsonSerializerOptions Opts = new()
     {
@@ -115,50 +117,120 @@ public sealed class ConfigModel
         return Default();
     }
 
-    // Null for a syntax error or a value of the wrong type. Kept apart from
-    // Load so it can be exercised without touching the real config.json.
+    // Match ParseConfig in the gadget: a bad field must not discard good cities.
+    // Kept apart from Load so tests never touch the user's config.json.
     internal static ConfigModel? Parse(string json)
     {
         try
         {
-            var model = JsonSerializer.Deserialize<ConfigModel>(json, Opts);
-            model?.Normalize();
+            using var document = JsonDocument.Parse(json);
+            var root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object) return null;
+            var model = Default();
+            var reader = new ConfigReader(model.CorrectedFields);
+            var cities = reader.Find(root, "cities");
+            if (cities.ValueKind == JsonValueKind.Array)
+            {
+                var list = new List<CityModel>();
+                int index = 0;
+                foreach (var city in cities.EnumerateArray())
+                {
+                    if (list.Count == MaxCities) break;
+                    string path = $"cities[{index++}]";
+                    if (city.ValueKind != JsonValueKind.Object)
+                    {
+                        reader.Correct(path);
+                        continue;
+                    }
+                    string label = reader.String(city, "label", "", path + ".");
+                    string tz = reader.String(city, "tz", "", path + ".");
+                    if (tz.Length == 0) { reader.Correct(path + ".tz"); continue; }
+                    list.Add(new CityModel { Label = Truncate(label, MaxLabelLength), Tz = tz });
+                }
+                if (list.Count != 0) model.Cities = list;
+            }
+            else if (cities.ValueKind != JsonValueKind.Undefined) reader.Correct("cities");
+
+            string mode = reader.String(root, "displayMode", "digital");
+            model.DisplayMode = mode == "analog" ? "analog" : "digital";
+            string layout = reader.String(root, "layout", "vertical");
+            model.Layout = layout == "horizontal" ? "horizontal" : "vertical";
+            model.HourFormat = reader.Int(root, "hourFormat", 24) == 12 ? 12 : 24;
+            model.ShowDate = reader.Bool(root, "showDate", true);
+            string date = reader.String(root, "dateFormat", "ddd, MMM d");
+            model.DateFormat = Truncate(date.Length == 0 ? "ddd, MMM d" : date, MaxDateFormatLength);
+            model.ShowSeconds = reader.Bool(root, "showSeconds", false);
+            string size = reader.String(root, "size", "medium");
+            model.Size = size is "small" or "large" ? size : "medium";
+            model.Opacity = Math.Clamp(reader.Int(root, "opacity", 85), 10, 100);
+            model.AlwaysOnTop = reader.Bool(root, "alwaysOnTop", false);
+            model.LockPosition = reader.Bool(root, "lockPosition", false);
+            model.LaunchAtStartup = reader.Bool(root, "launchAtStartup", false);
+            model.Theme = reader.String(root, "theme", "dark");
             return model;
         }
-        catch
+        catch (JsonException)
         {
+            return null;
+        }
+        catch (InvalidOperationException)
+        {
+            // System.Text.Json cannot decode an unpaired surrogate escape.
             return null;
         }
     }
 
-    // System.Text.Json stores a JSON null as is, even in properties declared
-    // non-null, so a hand-edited "cities": [null] or "label": null would reach
-    // the window and crash it (#50). Every model read from a file comes
-    // through here, Merge's `disk` included.
-    private void Normalize()
+    private sealed class ConfigReader(List<string> corrected)
     {
-        var defaults = new ConfigModel();
-        // Like the gadget: null entries are skipped, and no usable city list
-        // means the default cities.
-        Cities = (Cities ?? new()).Where(c => c != null).Take(MaxCities).ToList();
-        foreach (var city in Cities)
+        public void Correct(string path)
         {
-            city.Label = Truncate(city.Label ?? "", MaxLabelLength);
-            city.Tz ??= "";
+            if (!corrected.Contains(path)) corrected.Add(path);
         }
-        if (Cities.Count == 0) Cities = Default().Cities;
-        DisplayMode ??= defaults.DisplayMode;
-        Layout ??= defaults.Layout;
-        DateFormat = Truncate(DateFormat ?? defaults.DateFormat, MaxDateFormatLength);
-        Size ??= defaults.Size;
-        Theme ??= defaults.Theme;
+
+        // TryGetProperty chooses the last duplicate; the gadget chooses the first.
+        public JsonElement Find(JsonElement parent, string key)
+        {
+            foreach (var property in parent.EnumerateObject())
+                if (property.NameEquals(key)) return property.Value;
+            return default;
+        }
+
+        public string String(JsonElement parent, string key, string fallback, string prefix = "")
+        {
+            var value = Find(parent, key);
+            if (value.ValueKind == JsonValueKind.String) return value.GetString()!;
+            if (value.ValueKind != JsonValueKind.Undefined) Correct(prefix + key);
+            return fallback;
+        }
+
+        public bool Bool(JsonElement parent, string key, bool fallback)
+        {
+            var value = Find(parent, key);
+            if (value.ValueKind is JsonValueKind.True or JsonValueKind.False) return value.GetBoolean();
+            if (value.ValueKind != JsonValueKind.Undefined) Correct(key);
+            return fallback;
+        }
+
+        public int Int(JsonElement parent, string key, int fallback)
+        {
+            var value = Find(parent, key);
+            // Use the gadget's double conversion and truncation bounds, including
+            // fractions just below INT_MIN that still truncate into range.
+            if (value.ValueKind == JsonValueKind.Number && value.TryGetDouble(out double number)
+                && number > -2147483649.0 && number < 2147483648.0)
+                return (int)number;
+            if (value.ValueKind != JsonValueKind.Undefined) Correct(key);
+            return fallback;
+        }
     }
 
-    // Never ends on half a surrogate pair, which would not encode to UTF-8.
+    // Match TruncateUtf8's code-point limit without splitting a surrogate pair.
     private static string Truncate(string s, int max)
     {
-        if (s.Length <= max) return s;
-        return s[..(char.IsHighSurrogate(s[max - 1]) ? max - 1 : max)];
+        int end = 0, count = 0;
+        while (end < s.Length && count++ < max)
+            end += char.IsSurrogatePair(s, end) ? 2 : 1;
+        return s[..end];
     }
 
     public static string BackupPath => ConfigPath + ".bak";

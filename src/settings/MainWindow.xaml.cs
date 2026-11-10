@@ -42,7 +42,8 @@ public partial class MainWindow : FluentWindow
             System.Windows.Controls.Primitives.TextBoxBase.TextChangedEvent,
             new System.Windows.Controls.TextChangedEventHandler((_, _) => CityError.IsOpen = false));
 
-        LoadFromConfig(ConfigModel.Load(out var status));
+        var loaded = ConfigModel.Load(out var status);
+        LoadFromConfig(loaded);
         // Read back from the controls, so normalisation they apply (clamped
         // opacity, default date format) does not count as a user edit.
         _baseline = BuildConfig();
@@ -52,6 +53,14 @@ public partial class MainWindow : FluentWindow
         {
             _backupBeforeSave = true;
             Loaded += (_, _) => WarnConfigNotLoaded(status);
+        }
+        else if (loaded.CorrectedFields.Count != 0)
+        {
+            _backupBeforeSave = true;
+            Loaded += (_, _) => System.Windows.MessageBox.Show(this,
+                Strings.ConfigCorrected(string.Join(", ", loaded.CorrectedFields), ConfigModel.BackupPath),
+                Strings.WindowTitle,
+                System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Warning);
         }
     }
 
