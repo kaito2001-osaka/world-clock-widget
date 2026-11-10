@@ -136,12 +136,22 @@ private:
     Value parseNumber() {
         size_t start = i_;
         if (peek() == '-') get();
-        while (isdigit((unsigned char)peek())) get();
-        if (peek() == '.') { get(); while (isdigit((unsigned char)peek())) get(); }
+        auto digit = [](char c) { return c >= '0' && c <= '9'; };
+        if (peek() == '0') get();
+        else {
+            if (!digit(peek())) fail("invalid number");
+            while (digit(peek())) get();
+        }
+        if (peek() == '.') {
+            get();
+            if (!digit(peek())) fail("invalid fraction");
+            while (digit(peek())) get();
+        }
         if (peek() == 'e' || peek() == 'E') {
             get();
             if (peek() == '+' || peek() == '-') get();
-            while (isdigit((unsigned char)peek())) get();
+            if (!digit(peek())) fail("invalid exponent");
+            while (digit(peek())) get();
         }
         std::string n = s_.substr(start, i_ - start);
         if (n.empty()) fail("invalid number");
@@ -190,6 +200,7 @@ private:
                     default: fail("bad escape");
                 }
             } else {
+                if ((unsigned char)c < 0x20) fail("unescaped control character");
                 out += c;
             }
         }

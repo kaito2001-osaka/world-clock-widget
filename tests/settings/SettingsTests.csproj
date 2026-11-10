@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../src/settings/ConfigModel.cs" Link="ConfigModel.cs" />
+    <Compile Include="../../src/settings/TimeZoneIds.cs" Link="TimeZoneIds.cs" />
+    <Compile Include="../../src/settings/WindowsZoneMap.g.cs" Link="WindowsZoneMap.g.cs" />
+    <None Include="../fixtures/config-parsing.json" Link="config-parsing.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

@@ -19,6 +19,9 @@ if errorlevel 1 ( echo build failed & exit /b 1 )
 "%CTEST%" --test-dir "%~dp0build\clock" --output-on-failure
 if errorlevel 1 ( echo TESTS FAILED & exit /b 1 )
 
+dotnet run --project "%~dp0tests\settings\SettingsTests.csproj" -c Release
+if errorlevel 1 ( echo SETTINGS TESTS FAILED & exit /b 1 )
+
 echo.
 echo TESTS OK
 endlocal
