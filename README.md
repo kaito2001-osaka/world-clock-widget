@@ -186,7 +186,7 @@ immediately.
 ### Prerequisites
 
 - **Visual Studio 2022 / 2026** with the C++ desktop workload (MSVC v14.3x+, Windows SDK)
-- **[.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0)** — `winget install Microsoft.DotNet.SDK.8`
+- **[.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0)** — `winget install Microsoft.DotNet.SDK.10`
 - **[Inno Setup 6](https://jrsoftware.org/isdl.php)** (only to build the installer) — `winget install JRSoftware.InnoSetup`
 
 ### Build
@@ -203,6 +203,8 @@ make_installer.cmd
 ```
 
 Produces `dist_installer\WorldClockGadget-Setup.exe` (single file, ~50 MB).
+The installer bundles the .NET runtime, so an installed settings app keeps the runtime it was built with.
+When .NET ships a security update, update the SDK, rebuild the installer, and distribute it again.
 
 Individual targets:
 
@@ -275,7 +277,7 @@ The project is **deliberately split into two processes**. This is its central de
 | Component | Stack | Role | Resident |
 |---|---|---|---|
 | **WorldClockGadget** | C++20 / Win32 / Direct2D / DirectWrite | The only always-running process; draws the clocks | Yes |
-| **WorldClockSettings** | C# / .NET 8 / WPF + [WPF-UI](https://github.com/lepoco/wpfui) | Edits settings on demand, exits when closed | No |
+| **WorldClockSettings** | C# / .NET 10 / WPF + [WPF-UI](https://github.com/lepoco/wpfui) | Edits settings on demand, exits when closed | No |
 
 ### Why split it
 
