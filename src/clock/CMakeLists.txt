@@ -40,6 +40,10 @@ add_executable(WorldClockGadget WIN32
     WorldClockGadget.rc   # app icon + version info
     WorldClockGadget.manifest   # DPI awareness, segment heap, supported OS
 )
+# Ninja does not see files that rc pulls in, so a rebuilt .ico would
+# otherwise leave the old icon in the exe.
+set_source_files_properties(WorldClockGadget.rc PROPERTIES
+    OBJECT_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/../../icons/worldclock.ico)
 
 target_link_libraries(WorldClockGadget PRIVATE
     worldclock_core
