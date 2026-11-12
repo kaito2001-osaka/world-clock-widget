@@ -183,7 +183,7 @@ DST（サマータイム）は Windows 自身のタイムゾーンに従いま�
 ### 必要なもの
 
 - **Visual Studio 2022 / 2026** — C++ デスクトップ開発ワークロード（MSVC v14.3x 以降、Windows SDK）
-- **[.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0)** — `winget install Microsoft.DotNet.SDK.8`
+- **[.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0)** — `winget install Microsoft.DotNet.SDK.10`
 - **[Inno Setup 6](https://jrsoftware.org/isdl.php)**（インストーラーを作る場合のみ）— `winget install JRSoftware.InnoSetup`
 
 ### ビルド
@@ -200,6 +200,8 @@ make_installer.cmd
 ```
 
 `dist_installer\WorldClockGadget-Setup.exe` を生成します（単一ファイル、約50MB）。
+インストーラーは .NET ランタイムを同梱するため、インストール済みの設定アプリはビルドした時点のランタイムを使い続けます。
+.NET のセキュリティ更新が出たら、SDK を更新してからインストーラーを作り直し、配布し直してください。
 
 個別にビルドする場合:
 
@@ -274,7 +276,7 @@ DirectWrite の書式の作成をわざと失敗させます。そのうえで�
 | コンポーネント | 技術 | 役割 | 常駐 |
 |---|---|---|---|
 | **WorldClockGadget** | C++20 / Win32 / Direct2D / DirectWrite | 時計を描画して常駐する唯一のプロセス | ○ |
-| **WorldClockSettings** | C# / .NET 8 / WPF + [WPF-UI](https://github.com/lepoco/wpfui) | 設定を編集。閉じたら終了 | × |
+| **WorldClockSettings** | C# / .NET 10 / WPF + [WPF-UI](https://github.com/lepoco/wpfui) | 設定を編集。閉じたら終了 | × |
 
 ### なぜ分けるのか
 

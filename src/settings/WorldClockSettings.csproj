@@ -2,7 +2,7 @@
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <TargetFramework>net8.0-windows</TargetFramework>
+    <TargetFramework>net10.0-windows</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
@@ -10,7 +10,10 @@
     <AssemblyName>WorldClockSettings</AssemblyName>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>..\..\icons\worldclock.ico</ApplicationIcon>
-    <!-- Unpackaged, framework-dependent: relies on the installed .NET Desktop runtime. -->
+    <!-- Unpackaged. Framework-dependent by default, as in build_all.cmd's dist\, which
+         relies on the installed .NET Desktop runtime. make_installer.cmd publishes with
+         dotnet publish self-contained true instead, so the installer bundles the runtime
+         and an installed copy only gets .NET fixes when a rebuilt installer ships. -->
     <SelfContained>false</SelfContained>
     <Version>1.2.1</Version>
     <Product>World Clock Gadget</Product>
