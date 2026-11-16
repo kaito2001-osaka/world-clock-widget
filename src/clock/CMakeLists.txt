@@ -47,7 +47,7 @@ set_source_files_properties(WorldClockGadget.rc PROPERTIES
 
 target_link_libraries(WorldClockGadget PRIVATE
     worldclock_core
-    d2d1 d3d11 dwrite user32 gdi32 shell32 ole32 advapi32 wtsapi32
+    d2d1 d3d11 dwrite user32 gdi32 shell32 ole32 advapi32 wtsapi32 imm32
 )
 
 if (MSVC)

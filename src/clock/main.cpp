@@ -8,6 +8,7 @@
 #endif
 #include <windows.h>
 #include <delayimp.h>
+#include <imm.h>
 
 #include "Config.hpp"
 #include "GadgetWindow.hpp"
@@ -27,6 +28,13 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
     // resident process does not keep it and what it pulls in mapped.
     ConfigDir();
     __FUnloadDelayLoadedDLL2("SHELL32.dll");
+
+    // The gadget never takes text input, yet creating a window (and bringing
+    // it to the foreground for the context menu) makes user32 load the text
+    // services stack (MSCTF.dll and what it pulls in). Disabling the IME for
+    // every thread of the process (-1) keeps it out; it only works before the
+    // first window exists.
+    ImmDisableIME(static_cast<DWORD>(-1));
 
     int rc = 0;
     {
