@@ -14,7 +14,9 @@
 
 int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int) {
     // Per-monitor v2 DPI awareness comes from WorldClockGadget.manifest.
-    CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED); // for WIC
+    // Nothing here needs COM any more (#41 dropped the WIC factory), but a
+    // build without this call measured no smaller (#45), so it stays.
+    CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
 
     // Single instance: bail out if another gadget is already running.
     HANDLE mtx = CreateMutexW(nullptr, TRUE, L"WorldClockGadget_SingleInstance");
