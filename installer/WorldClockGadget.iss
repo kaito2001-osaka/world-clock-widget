@@ -9,7 +9,7 @@
   #define StageDir "..\build\stage"
 #endif
 #ifndef AppVer
-  #define AppVer "1.2.1"
+  #define AppVer "1.3.0"
 #endif
 
 #define AppName "World Clock Gadget"
