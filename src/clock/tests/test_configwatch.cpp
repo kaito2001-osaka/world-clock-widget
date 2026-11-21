@@ -118,6 +118,16 @@ TEST(config_change_rejects_a_missing_buffer) {
 
 // ---- watch failures (#27) -------------------------------------------------
 
+TEST(watch_catches_up_once_on_startup_and_again_after_reopen) {
+    WatchSession startup;
+    CHECK(startup.OnReadArmed());
+    CHECK(!startup.OnReadArmed());
+
+    WatchSession reopened;
+    CHECK(reopened.OnReadArmed());
+    CHECK(!reopened.OnReadArmed());
+}
+
 TEST(watch_overflow_error_is_told_apart_from_a_broken_handle) {
     // An overflow keeps the handle; anything else means reopening it.
     CHECK_EQ(IsOverflowError(ERROR_NOTIFY_ENUM_DIR), true);
