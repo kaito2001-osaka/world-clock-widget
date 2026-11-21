@@ -57,7 +57,7 @@ private:
     void WatchThreadProc();
     // One open-arm-wait session on the config directory; returns on an error
     // (the caller backs off and reopens) or when the stop event is set.
-    void WatchDirectory(bool afterFailure, int& failures);
+    void WatchDirectory(int& failures);
     void RequestReload();   // watcher thread; coalesced via reloadPending_
 
     Renderer    renderer_;

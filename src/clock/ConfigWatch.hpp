@@ -11,6 +11,17 @@
 #pragma once
 #include <windows.h>
 #include <string>
+#include <utility>
+
+// Each directory open starts a new session. Its first successful read must
+// trigger a reload to pick up saves made before startup or recovery armed it.
+class WatchSession {
+public:
+    bool OnReadArmed() { return std::exchange(needsCatchUp_, false); }
+
+private:
+    bool needsCatchUp_ = true;
+};
 
 // The config file this gadget watches for, relative to the watched directory.
 inline constexpr const wchar_t* kConfigFileName = L"config.json";

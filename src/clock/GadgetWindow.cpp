@@ -544,12 +544,10 @@ void GadgetWindow::StopWatcher() {
 // Instead each failed session is followed by a backoff and a reopen. The stop
 // event ends the backoff wait early, so shutdown never waits it out.
 void GadgetWindow::WatchThreadProc() {
-    int  failures     = 0;
-    bool afterFailure = false;
+    int failures = 0;
     while (watchRun_.load()) {
-        WatchDirectory(afterFailure, failures);
+        WatchDirectory(failures);
         if (!watchRun_.load()) break;
-        afterFailure = true;
         // Only a timeout means "retry now". A failed wait returns at once, so
         // treating it as a timeout would turn the backoff into a busy loop.
         if (WaitForSingleObject(watchStop_, WatchRetryDelayMs(failures++)) != WAIT_TIMEOUT)
@@ -557,7 +555,7 @@ void GadgetWindow::WatchThreadProc() {
     }
 }
 
-void GadgetWindow::WatchDirectory(bool afterFailure, int& failures) {
+void GadgetWindow::WatchDirectory(int& failures) {
     const std::wstring dir = ConfigDir();   // recreates the folder if it was deleted
     HANDLE h = CreateFileW(dir.c_str(), FILE_LIST_DIRECTORY,
                            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
@@ -573,7 +571,7 @@ void GadgetWindow::WatchDirectory(bool afterFailure, int& failures) {
     // plain BYTE array is only 1-aligned (#57).
     alignas(DWORD) BYTE buf[4096];
     bool pending = false;
-    bool armed   = false;
+    WatchSession session;
 
     while (watchRun_.load()) {
         DWORD bytes = 0;
@@ -584,12 +582,8 @@ void GadgetWindow::WatchDirectory(bool afterFailure, int& failures) {
         if (!ok) break;   // reopen
         pending = true;
 
-        // Nothing was watching between the failure and now, so a save made
-        // in that gap produced no notification. Read the file once to catch it.
-        if (!armed) {
-            armed = true;
-            if (afterFailure) RequestReload();
-        }
+        // Arm before reloading so saves during the catch-up read are reported too.
+        if (session.OnReadArmed()) RequestReload();
 
         HANDLE waits[2] = { ov.hEvent, watchStop_ };
         DWORD w = WaitForMultipleObjects(2, waits, FALSE, INFINITE);
