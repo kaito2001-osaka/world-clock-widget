@@ -1,11 +1,13 @@
 // Tests for config.json parsing, defaults and clamping (Config.hpp).
 #include "test_framework.hpp"
 #include "Config.hpp"
+#include "json.hpp"
 
 #include <windows.h>
 #include <cstring>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace {
 
@@ -34,6 +36,17 @@ struct TempFile {
         DWORD n = 0;
         WriteFile(h, bytes.data(), (DWORD)bytes.size(), &n, nullptr);
         CloseHandle(h);
+    }
+    std::string Read() const {
+        std::string out;
+        HANDLE h = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr,
+                               OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (h == INVALID_HANDLE_VALUE) return out;
+        char buf[4096];
+        DWORD n = 0;
+        while (ReadFile(h, buf, sizeof(buf), &n, nullptr) && n > 0) out.append(buf, n);
+        CloseHandle(h);
+        return out;
     }
 };
 
@@ -252,41 +265,155 @@ TEST(config_write_file_leaves_the_old_file_when_it_cannot_replace_it) {
     CHECK(!Exists(f.path + L".gadget.tmp"));
 }
 
-TEST(config_edit_is_refused_when_the_file_could_not_be_read) {
-    Config displayed = DefaultConfig();
-    displayed.cities = { { "Osaka", "Asia/Tokyo" } };
+// ---- one-key edits from the menu (#86) -------------------------------------
 
-    // The data-loss case: a menu toggle over a malformed file used to write
-    // the defaults, replacing the user's cities.
-    ConfigLoadResult malformed;
-    malformed.status = ConfigLoadStatus::ParseFailed;
-    CHECK(!BaseForEdit(malformed, displayed).has_value());
+namespace {
 
-    ConfigLoadResult locked;
-    locked.status = ConfigLoadStatus::ReadFailed;
-    CHECK(!BaseForEdit(locked, displayed).has_value());
+// The issue's reproduction: everything ParseConfig drops, cuts or defaults.
+// 34 valid cities (past kMaxCities), an 80-character label, a city with
+// "timezone" instead of "tz", an unknown display mode, a 70-character date
+// format and a key the gadget does not know.
+std::string LossyInput() {
+    std::string s = "{\n  \"cities\": [\n";
+    for (int k = 0; k < 34; ++k)
+        s += "    {\"label\": \"City " + std::to_string(k) + "\", \"tz\": \"Asia/Tokyo\"},\n";
+    s += "    {\"label\": \"" + std::string(80, 'L') + "\", \"tz\": \"Europe/London\"},\n";
+    s += "    {\"label\": \"Osaka\", \"timezone\": \"Asia/Tokyo\"}\n  ],\n";
+    s += "  \"displayMode\": \"Analog\",\n";
+    s += "  \"dateFormat\": \"" + std::string(70, 'd') + "\",\n";
+    s += "  \"lockPosition\": false,\n";
+    s += "  \"futureOption\": {\"nested\": [1, 2.5, null]}\n}\n";
+    return s;
 }
 
-TEST(config_edit_builds_on_the_file_or_on_what_is_displayed) {
+std::vector<std::string> Keys(const json::Value& v) {
+    std::vector<std::string> keys;
+    for (const auto& kv : v.obj) keys.push_back(kv.first);
+    return keys;
+}
+
+// What the edit must produce: the input document with one key set.
+std::string WithKey(const std::string& text, const char* key, bool value) {
+    json::Value root = json::parse(text);
+    root.set(key, value);
+    return json::dump(root);
+}
+
+void CheckNothingLost(const std::string& text) {
+    json::Value root = json::parse(text);
+    const json::Value* cities = root.find("cities");
+    CHECK(cities != nullptr);
+    if (!cities) return;
+    CHECK_EQ(cities->arr.size(), (size_t)36);
+    if (cities->arr.size() != 36) return;
+    CHECK_EQ(cities->arr[34].getString("label", "").size(), (size_t)80);
+    CHECK_EQ(cities->arr[35].getString("label", ""), std::string("Osaka"));
+    CHECK_EQ(cities->arr[35].getString("timezone", ""), std::string("Asia/Tokyo"));
+    CHECK_EQ(root.getString("displayMode", ""), std::string("Analog"));
+    CHECK_EQ(root.getString("dateFormat", "").size(), (size_t)70);
+    CHECK(root.find("futureOption") != nullptr);
+}
+
+} // namespace
+
+TEST(config_edit_text_changes_only_the_toggled_key) {
+    const std::string in = LossyInput();
+    std::optional<std::string> out = EditConfigText(in, "lockPosition", true);
+    CHECK(out.has_value());
+    if (!out) return;
+    CHECK_EQ(*out, WithKey(in, "lockPosition", true));
+    CheckNothingLost(*out);
+
+    json::Value root = json::parse(*out);
+    CHECK(root.getBool("lockPosition", false));
+    // Replaced in place: the keys keep the file's order.
+    CHECK(Keys(root) == Keys(json::parse(in)));
+}
+
+TEST(config_edit_text_appends_a_missing_key_and_replaces_a_mistyped_one) {
+    std::optional<std::string> added = EditConfigText(R"({"opacity": 40})", "alwaysOnTop", true);
+    CHECK(added.has_value());
+    if (added) {
+        json::Value root = json::parse(*added);
+        CHECK(Keys(root) == (std::vector<std::string>{ "opacity", "alwaysOnTop" }));
+        CHECK_EQ(root.getInt("opacity", 0), 40);
+        CHECK(root.getBool("alwaysOnTop", false));
+    }
+
+    std::optional<std::string> fixed = EditConfigText(R"({"lockPosition": "yes"})", "lockPosition", true);
+    CHECK(fixed.has_value());
+    if (fixed) {
+        const json::Value* v = json::parse(*fixed).find("lockPosition");
+        CHECK(v != nullptr && v->type == json::Type::Bool && v->b);
+    }
+}
+
+TEST(config_edit_text_refuses_what_parse_config_refuses) {
+    for (const char* text : { "", "{", "{\"opacity\": 40,}", "[]", "\"x\"", "42" }) {
+        CHECK(!EditConfigText(text, "lockPosition", true).has_value());
+        CHECK(!ParseConfig(text).has_value());
+    }
+}
+
+TEST(config_edit_file_keeps_everything_the_gadget_skipped) {
+    TempFile f("edit_lossy");
+    const std::string in = LossyInput();
+    f.Write(in);
+    Config displayed = Parsed(in.c_str());
+
+    CHECK(EditConfigFileBool(f.path, &Config::lockPosition, true, displayed) ==
+          ConfigEditResult::Written);
+    const std::string after = f.Read();
+    CHECK_EQ(after, WithKey(in, "lockPosition", true));
+    CheckNothingLost(after);
+    CHECK(LoadConfigFile(f.path).config.lockPosition);
+    CHECK(!Exists(f.path + L".gadget.tmp"));
+
+    // Toggling back leaves the document as it was, key for key.
+    CHECK(EditConfigFileBool(f.path, &Config::lockPosition, false, displayed) ==
+          ConfigEditResult::Written);
+    CHECK_EQ(f.Read(), WithKey(in, "lockPosition", false));
+}
+
+TEST(config_edit_file_writes_what_is_displayed_when_there_is_no_file) {
+    TempFile f("edit_missing");
     Config displayed = DefaultConfig();
     displayed.cities = { { "Osaka", "Asia/Tokyo" } };
 
-    // A readable file wins over the displayed copy: it may hold a save the
-    // watcher has not reloaded yet.
-    ConfigLoadResult onDisk;
-    onDisk.status = ConfigLoadStatus::Ok;
-    onDisk.config = DefaultConfig();
-    onDisk.config.cities = { { "Sapporo", "Asia/Tokyo" } };
-    std::optional<Config> a = BaseForEdit(onDisk, displayed);
-    CHECK(a.has_value());
-    if (a) CHECK_EQ(a->cities[0].label, std::string("Sapporo"));
+    CHECK(EditConfigFileBool(f.path, &Config::alwaysOnTop, true, displayed) ==
+          ConfigEditResult::Written);
+    ConfigLoadResult r = LoadConfigFile(f.path);
+    CHECK(r.status == ConfigLoadStatus::Ok);
+    Config expected = displayed;
+    expected.alwaysOnTop = true;
+    CHECK(r.config == expected);
+}
 
-    // No file means nothing to lose: recreate it from what is on screen.
-    ConfigLoadResult missing;
-    missing.status = ConfigLoadStatus::Missing;
-    std::optional<Config> b = BaseForEdit(missing, displayed);
-    CHECK(b.has_value());
-    if (b) CHECK_EQ(b->cities[0].label, std::string("Osaka"));
+TEST(config_edit_file_leaves_a_malformed_file_alone) {
+    // The #23 data-loss case: a toggle over a malformed file used to write the
+    // defaults, replacing the user's cities.
+    TempFile f("edit_malformed");
+    const std::string in = R"({"cities": [{"label": "Osaka", "tz": "Asia/Tokyo"}],)";
+    f.Write(in);
+    CHECK(EditConfigFileBool(f.path, &Config::lockPosition, true, DefaultConfig()) ==
+          ConfigEditResult::ParseFailed);
+    CHECK_EQ(f.Read(), in);
+    CHECK(!Exists(f.path + L".gadget.tmp"));
+}
+
+TEST(config_edit_file_leaves_an_unreadable_file_alone) {
+    TempFile f("edit_locked");
+    const std::string in = R"({"opacity": 40})";
+    f.Write(in);
+    // No sharing at all, so the gadget's read is refused.
+    HANDLE lock = CreateFileW(f.path.c_str(), GENERIC_READ, 0, nullptr,
+                              OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    CHECK(lock != INVALID_HANDLE_VALUE);
+    const ConfigEditResult r = EditConfigFileBool(f.path, &Config::lockPosition, true, DefaultConfig());
+    CloseHandle(lock);
+
+    CHECK(r == ConfigEditResult::ReadFailed);
+    CHECK_EQ(f.Read(), in);
 }
 
 // ---- reload no-op (#27) ---------------------------------------------------

@@ -457,29 +457,30 @@ void GadgetWindow::LaunchSettings() {
 // Re-reads the file rather than rebuilding it from config_, so a save the
 // settings app made a moment ago (and the watcher has not reloaded yet)
 // survives. A file that is there but unreadable is left alone: writing the
-// defaults over it would throw away every city the user can still fix.
+// defaults over it would throw away every city the user can still fix. Only
+// the toggled key changes: config_ is normalized for display, and writing it
+// back would delete the cities, text and keys it left out (#86).
 bool GadgetWindow::PersistToggle(bool Config::* field, bool value) {
     if (!ConfigStorageAvailable()) {
         ShowWarning(Ui().configDirUnavailable);
         return false;
     }
-    const ConfigLoadResult onDisk = LoadConfig();
-    std::optional<Config> base = BaseForEdit(onDisk, config_);
-    if (!base) {
-        std::wstring text = onDisk.status == ConfigLoadStatus::ParseFailed
-            ? Ui().saveParseFailed
-            : Ui().saveUnreadable;
-        ShowWarning(text + kConfigPathHint);
-        return false;
-    }
-    (*base).*field = value;
     // On failure the caller leaves config_ (and the menu check) as it was, so
     // what is shown never claims a setting the file does not hold.
-    if (!WriteConfigFull(*base)) {
-        ShowWarning(std::wstring(Ui().saveWriteFailed) + kConfigPathHint);
-        return false;
+    switch (EditConfigFileBool(ConfigPath(), field, value, config_)) {
+        case ConfigEditResult::Written:
+            return true;
+        case ConfigEditResult::ParseFailed:
+            ShowWarning(std::wstring(Ui().saveParseFailed) + kConfigPathHint);
+            return false;
+        case ConfigEditResult::ReadFailed:
+            ShowWarning(std::wstring(Ui().saveUnreadable) + kConfigPathHint);
+            return false;
+        case ConfigEditResult::WriteFailed:
+        default:
+            ShowWarning(std::wstring(Ui().saveWriteFailed) + kConfigPathHint);
+            return false;
     }
-    return true;
 }
 
 void GadgetWindow::ShowMenu() {
