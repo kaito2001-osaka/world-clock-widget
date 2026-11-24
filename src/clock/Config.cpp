@@ -268,16 +268,20 @@ ConfigLoadResult LoadConfigFile(const std::wstring& path) {
 
 ConfigLoadResult LoadConfig() { return LoadConfigFile(ConfigPath()); }
 
-std::optional<Config> BaseForEdit(const ConfigLoadResult& onDisk, const Config& displayed) {
-    switch (onDisk.status) {
-        case ConfigLoadStatus::Ok:      return onDisk.config;
-        case ConfigLoadStatus::Missing: return displayed;
-        default:                        return std::nullopt;
-    }
-}
-
 bool NeedsApply(bool shownIsFromFile, const Config& shown, const Config& loaded) {
     return !shownIsFromFile || shown != loaded;
+}
+
+// The file's key for each boolean setting, kept in one place so a one-key edit
+// (EditConfigFileBool) and the full writer cannot drift apart. Null for a
+// member that is not written to the file.
+static const char* BoolKey(bool Config::* field) {
+    if (field == &Config::showDate)        return "showDate";
+    if (field == &Config::showSeconds)     return "showSeconds";
+    if (field == &Config::alwaysOnTop)     return "alwaysOnTop";
+    if (field == &Config::lockPosition)    return "lockPosition";
+    if (field == &Config::launchAtStartup) return "launchAtStartup";
+    return nullptr;
 }
 
 static std::string ModeStr(DisplayMode m) { return m == DisplayMode::Analog ? "analog" : "digital"; }
@@ -301,19 +305,54 @@ bool WriteConfigFile(const std::wstring& path, const Config& c) {
     root.set("displayMode", ModeStr(c.displayMode));
     root.set("layout", LayoutStr(c.layout));
     root.set("hourFormat", c.hourFormat);
-    root.set("showDate", c.showDate);
+    root.set(BoolKey(&Config::showDate), c.showDate);
     root.set("dateFormat", c.dateFormat);
-    root.set("showSeconds", c.showSeconds);
+    root.set(BoolKey(&Config::showSeconds), c.showSeconds);
     root.set("size", SizeStr(c.size));
     root.set("opacity", c.opacity);
-    root.set("alwaysOnTop", c.alwaysOnTop);
-    root.set("lockPosition", c.lockPosition);
-    root.set("launchAtStartup", c.launchAtStartup);
+    root.set(BoolKey(&Config::alwaysOnTop), c.alwaysOnTop);
+    root.set(BoolKey(&Config::lockPosition), c.lockPosition);
+    root.set(BoolKey(&Config::launchAtStartup), c.launchAtStartup);
     root.set("theme", c.theme);
     return WriteFileAtomic(path, json::dump(root));
 }
 
 bool WriteConfigFull(const Config& c) { return WriteConfigFile(ConfigPath(), c); }
+
+std::optional<std::string> EditConfigText(const std::string& text, const std::string& key, bool value) {
+    try {
+        json::Value root = json::parse(text);
+        if (!root.isObject()) return std::nullopt;
+        root.set(key, value);
+        return json::dump(root);
+    } catch (...) {
+        return std::nullopt;
+    }
+}
+
+ConfigEditResult EditConfigFileBool(const std::wstring& path, bool Config::* field, bool value,
+                                    const Config& displayed) {
+    const char* key = BoolKey(field);
+    if (!key) return ConfigEditResult::WriteFailed;   // not a field the file has
+
+    std::string text;
+    switch (ReadFileUtf8(path, text)) {
+        case ReadResult::Failed:
+            return ConfigEditResult::ReadFailed;
+        case ReadResult::Missing: {
+            Config c = displayed;
+            c.*field = value;
+            return WriteConfigFile(path, c) ? ConfigEditResult::Written
+                                            : ConfigEditResult::WriteFailed;
+        }
+        case ReadResult::Ok:
+            break;
+    }
+    const std::optional<std::string> edited = EditConfigText(text, key, value);
+    if (!edited) return ConfigEditResult::ParseFailed;
+    return WriteFileAtomic(path, *edited) ? ConfigEditResult::Written
+                                          : ConfigEditResult::WriteFailed;
+}
 
 bool WriteDefaultConfigIfMissing() {
     const std::wstring path = ConfigPath();

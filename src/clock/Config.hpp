@@ -109,12 +109,29 @@ struct ConfigLoadResult {
 ConfigLoadResult LoadConfigFile(const std::wstring& path);
 ConfigLoadResult LoadConfig();          // LoadConfigFile(ConfigPath())
 
-// The config a one-field edit should be written on top of, or nullopt when
-// writing must not happen. A file that exists but could not be read or parsed
-// still holds the user's settings; rewriting it from the defaults would
-// destroy them, so the edit is refused instead. A missing file has nothing to
-// lose, so the edit goes on top of what is displayed.
-std::optional<Config> BaseForEdit(const ConfigLoadResult& onDisk, const Config& displayed);
+// config.json text with only `key` set to `value`, or nullopt when the text is
+// not a JSON object (the same texts ParseConfig rejects). Pure, so it is unit
+// testable. Edits the document itself, not a parsed Config: ParseConfig
+// normalizes for display (drops cities without a zone and past kMaxCities,
+// cuts long strings, defaults unknown values, ignores unknown keys), and
+// writing that back would delete whatever it left out (#86). Every other key
+// keeps its value and its place; a missing `key` is appended.
+std::optional<std::string> EditConfigText(const std::string& text, const std::string& key, bool value);
+
+enum class ConfigEditResult {
+    Written,
+    ReadFailed,    // the file exists but could not be read; left alone
+    ParseFailed,   // the file is not a JSON object; left alone
+    WriteFailed,   // the edit could not be written; the old file stands
+};
+
+// Set one boolean setting in the config file at `path`. A file that exists
+// but could not be read or parsed still holds the user's settings; rewriting
+// it from the defaults would destroy them, so the edit is refused instead
+// (#23). A missing file has nothing to lose, so `displayed` is written with
+// the field set.
+ConfigEditResult EditConfigFileBool(const std::wstring& path, bool Config::* field, bool value,
+                                    const Config& displayed);
 
 // Whether a config that just loaded has to be applied. One save can reach the
 // watcher as several notifications, and an overflow or a reopened watch asks
