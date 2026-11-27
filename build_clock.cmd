@@ -6,17 +6,17 @@ set CMAKE=C:\Program Files\Microsoft Visual Studio\18\Community\Common7\IDE\Comm
 set NINJA=C:\Program Files\Microsoft Visual Studio\18\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\Ninja\ninja.exe
 
 call "%VC%" >nul
-if errorlevel 1 ( echo vcvars failed & exit /b 1 )
+if %errorlevel% neq 0 ( echo vcvars failed & exit /b 1 )
 
 "%CMAKE%" -S "%~dp0src\clock" -B "%~dp0build\clock" -G Ninja ^
   -DCMAKE_MAKE_PROGRAM="%NINJA%" -DCMAKE_BUILD_TYPE=Release
-if errorlevel 1 ( echo configure failed & exit /b 1 )
+if %errorlevel% neq 0 ( echo configure failed & exit /b 1 )
 
 "%CMAKE%" --build "%~dp0build\clock" --config Release
-if errorlevel 1 ( echo build failed & exit /b 1 )
+if %errorlevel% neq 0 ( echo build failed & exit /b 1 )
 
 call "%~dp0tools\check-static-crt.cmd" "%~dp0build\clock\WorldClockGadget.exe"
-if errorlevel 1 ( echo static CRT check failed & exit /b 1 )
+if %errorlevel% neq 0 ( echo static CRT check failed & exit /b 1 )
 
 echo.
 echo BUILD OK: %~dp0build\clock\WorldClockGadget.exe
