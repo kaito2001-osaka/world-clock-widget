@@ -97,7 +97,7 @@ public sealed class ConfigModel
     public static ConfigModel Load(out ConfigLoadStatus status) => LoadFile(ConfigPath, out status);
 
     // Load's steps on any path, so tests never touch the user's config.json.
-    // File.ReadAllText decodes a UTF-8, UTF-16 or UTF-32 BOM; the gadget's
+    // The StreamReader decodes a UTF-8, UTF-16 or UTF-32 BOM; the gadget's
     // DecodeConfigBytes follows it.
     internal static ConfigModel LoadFile(string path, out ConfigLoadStatus status)
     {
@@ -109,12 +109,19 @@ public sealed class ConfigModel
                 status = ConfigLoadStatus.Missing;
                 return Default();
             }
-            if (new FileInfo(path).Length > MaxFileBytes)
+            // One open for the size check and the read, as the gadget does: a
+            // replace between two opens could hand us a file that was never
+            // checked. The reader decodes like File.ReadAllText (UTF-8 unless
+            // a BOM says otherwise).
+            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+            if (stream.Length > MaxFileBytes)
             {
                 status = ConfigLoadStatus.TooLarge;
                 return Default();
             }
-            json = File.ReadAllText(path);
+            using var reader = new StreamReader(stream, System.Text.Encoding.UTF8,
+                                                detectEncodingFromByteOrderMarks: true);
+            json = reader.ReadToEnd();
         }
         catch
         {

@@ -101,7 +101,7 @@ std::optional<Config> ParseConfig(const std::string& text);
 constexpr long long kMaxConfigFileBytes = 1 << 20;
 
 // The bytes of a config file as UTF-8 text, the way the settings app's
-// File.ReadAllText reads them: a UTF-8 BOM is dropped, and a UTF-32 or UTF-16
+// StreamReader (as File.ReadAllText) reads them: a UTF-8 BOM is dropped, and a UTF-32 or UTF-16
 // BOM (either byte order) is decoded to UTF-8, so a file saved by Windows
 // PowerShell 5.1's Out-File opens in both apps (#87). Without a BOM the bytes
 // are read as UTF-8. A sequence that cannot be decoded (ill-formed UTF-8, an
