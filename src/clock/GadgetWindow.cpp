@@ -418,9 +418,9 @@ void GadgetWindow::OnConfigLoadFailed(ConfigLoadStatus status) {
     if (configNoticeShown_) return;   // once per run of failures
     configNoticeShown_ = true;
 
-    std::wstring text = status == ConfigLoadStatus::ParseFailed
-        ? Ui().configParseFailed
-        : Ui().configUnreadable;
+    std::wstring text = status == ConfigLoadStatus::ParseFailed ? Ui().configParseFailed
+                      : status == ConfigLoadStatus::TooLarge    ? Ui().configTooLarge
+                                                                : Ui().configUnreadable;
     text += Ui().configKeepingLast;
     ShowWarning(text + kConfigPathHint);
 }
@@ -475,6 +475,9 @@ bool GadgetWindow::PersistToggle(bool Config::* field, bool value) {
             return false;
         case ConfigEditResult::ReadFailed:
             ShowWarning(std::wstring(Ui().saveUnreadable) + kConfigPathHint);
+            return false;
+        case ConfigEditResult::TooLarge:
+            ShowWarning(std::wstring(Ui().saveTooLarge) + kConfigPathHint);
             return false;
         case ConfigEditResult::WriteFailed:
         default:

@@ -81,6 +81,9 @@ public static class Strings
         "いったん閉じて開き直すと、読み込めることがあります。",
         "config.json could not be loaded (another app is using it, or access was denied).\n" +
         "Closing and reopening this window may help.");
+    public static string ConfigTooLarge => T(
+        "config.json が 1 MiB を超えているため、読み込めませんでした。",
+        "config.json could not be loaded because it is larger than 1 MiB.");
     public static string ConfigNotLoaded(string reason, string backupPath) => T(
         $"{reason}\n既定の設定を表示しています。\n\n" +
         "このまま保存すると config.json は上書きされます。" +

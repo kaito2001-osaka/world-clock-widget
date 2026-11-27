@@ -6,6 +6,7 @@ const UiStrings kUiJa = {
     L"config.json に構文エラーがあるため、読み込めませんでした。\n",
     L"config.json を読み込めませんでした"
     L"（他のアプリが使用中か、アクセスが拒否されています）。\n",
+    L"config.json が 1 MiB を超えているため、読み込めませんでした。\n",
     L"読み込めるようになるまで、直前に読み込めた設定"
     L"（無い場合は既定の設定）で表示します。config.json は変更しません。",
 
@@ -23,6 +24,8 @@ const UiStrings kUiJa = {
     L"ファイルを修正するか、設定アプリから保存し直してください。",
     L"config.json を読み込めないため、この変更を保存できませんでした。\n"
     L"しばらくしてから、もう一度お試しください。",
+    L"config.json が 1 MiB を超えているため、この変更を保存できませんでした。\n"
+    L"ファイルを修正するか、設定アプリから保存し直してください。",
     L"config.json に変更を保存できませんでした。\n"
     L"ファイルが読み取り専用でないか確認し、もう一度お試しください。",
 
@@ -38,6 +41,7 @@ const UiStrings kUiEn = {
     L"config.json could not be loaded because it has a syntax error.\n",
     L"config.json could not be loaded"
     L" (another app is using it, or access was denied).\n",
+    L"config.json could not be loaded because it is larger than 1 MiB.\n",
     L"Until it can be loaded, the last settings that loaded"
     L" (or the defaults, if none did) are shown. config.json is not changed.",
 
@@ -55,6 +59,8 @@ const UiStrings kUiEn = {
     L"Fix the file, or save again from the settings app.",
     L"This change could not be saved because config.json could not be read.\n"
     L"Please try again in a moment.",
+    L"This change could not be saved because config.json is larger than 1 MiB.\n"
+    L"Fix the file, or save again from the settings app.",
     L"The change could not be saved to config.json.\n"
     L"Check that the file is not read-only, then try again.",
 

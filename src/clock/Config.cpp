@@ -17,10 +17,7 @@ std::string ToUtf8(const std::wstring& w) {
     return s;
 }
 
-// Both files are a few hundred bytes; anything this large is not ours.
-constexpr LONGLONG kMaxFileBytes = 1 << 20;
-
-enum class ReadResult { Ok, Missing, Failed };
+enum class ReadResult { Ok, Missing, Failed, TooLarge };
 
 bool IsNotFound(DWORD err) {
     return err == ERROR_FILE_NOT_FOUND || err == ERROR_PATH_NOT_FOUND;
@@ -42,8 +39,12 @@ ReadResult ReadFileUtf8(const std::wstring& path, std::string& out) {
         return IsNotFound(GetLastError()) ? ReadResult::Missing : ReadResult::Failed;
 
     LARGE_INTEGER size{};
-    bool ok = GetFileSizeEx(h, &size) && size.QuadPart <= kMaxFileBytes;
-    if (ok && size.QuadPart > 0) {
+    if (!GetFileSizeEx(h, &size)) { CloseHandle(h); return ReadResult::Failed; }
+    // Its own result: reporting it as "locked or access denied" sends the
+    // user looking for a cause that is not there (#87).
+    if (size.QuadPart > kMaxConfigFileBytes) { CloseHandle(h); return ReadResult::TooLarge; }
+    bool ok = true;
+    if (size.QuadPart > 0) {
         out.resize((size_t)size.QuadPart);
         DWORD got = 0;
         // A short read means the file changed under us; report it rather
@@ -53,11 +54,7 @@ ReadResult ReadFileUtf8(const std::wstring& path, std::string& out) {
     CloseHandle(h);
     if (!ok) { out.clear(); return ReadResult::Failed; }
 
-    // strip UTF-8 BOM if present
-    if (out.size() >= 3 && (unsigned char)out[0] == 0xEF &&
-        (unsigned char)out[1] == 0xBB && (unsigned char)out[2] == 0xBF) {
-        out.erase(0, 3);
-    }
+    out = DecodeConfigBytes(std::move(out));
     return ReadResult::Ok;
 }
 
@@ -135,6 +132,105 @@ bool IsAbsolutePath(const std::wstring& p) {
 }
 
 } // namespace
+
+static bool StartsWith(const std::string& s, const char* bom, size_t n) {
+    return s.size() >= n && s.compare(0, n, bom, n) == 0;
+}
+
+// UTF-8 with every ill-formed sequence replaced by one U+FFFD per maximal
+// subpart (Unicode 3.9, U+FFFD substitution), which is what .NET's UTF-8
+// decoder does. Without this, a stray byte would reach a label in the gadget
+// as is while the settings app read U+FFFD (#87). Well-formed text is
+// returned unchanged.
+static std::string ReplaceIllFormedUtf8(std::string bytes, size_t start) {
+    const auto at = [&](size_t i) { return (unsigned)(unsigned char)bytes[i]; };
+    std::string out;
+    out.reserve(bytes.size() - start);
+    size_t i = start;
+    while (i < bytes.size()) {
+        const unsigned b0 = at(i);
+        if (b0 < 0x80) { out += (char)b0; ++i; continue; }
+
+        // Table 3-7: the length a lead byte asks for, and the range its
+        // second byte must fall in (it rules out overlongs, surrogates and
+        // code points past U+10FFFF). Later bytes are all 80..BF.
+        size_t need = 0;
+        unsigned lo = 0x80, hi = 0xBF;
+        if (b0 >= 0xC2 && b0 <= 0xDF)      need = 1;
+        else if (b0 == 0xE0)               { need = 2; lo = 0xA0; }
+        else if (b0 == 0xED)               { need = 2; hi = 0x9F; }
+        else if (b0 >= 0xE1 && b0 <= 0xEF) need = 2;
+        else if (b0 == 0xF0)               { need = 3; lo = 0x90; }
+        else if (b0 == 0xF4)               { need = 3; hi = 0x8F; }
+        else if (b0 >= 0xF1 && b0 <= 0xF3) need = 3;
+
+        size_t got = 0;   // continuation bytes that fit
+        while (got < need && i + 1 + got < bytes.size()) {
+            const unsigned b = at(i + 1 + got);
+            const bool fits = got == 0 ? (b >= lo && b <= hi) : (b >= 0x80 && b <= 0xBF);
+            if (!fits) break;
+            ++got;
+        }
+        if (need != 0 && got == need) {
+            out.append(bytes, i, need + 1);
+        } else {
+            // The lead byte and the continuation bytes that fit are one
+            // maximal subpart; the byte that did not fit starts afresh.
+            json::appendUtf8(out, 0xFFFD);
+        }
+        i += 1 + got;
+    }
+    return out;
+}
+
+std::string DecodeConfigBytes(std::string bytes) {
+    const auto at = [&](size_t i) { return (unsigned)(unsigned char)bytes[i]; };
+
+    if (StartsWith(bytes, "\xEF\xBB\xBF", 3)) return ReplaceIllFormedUtf8(std::move(bytes), 3);
+
+    // UTF-32LE's BOM begins with UTF-16LE's, so it is checked first; .NET
+    // decides the same way.
+    const bool utf32le = StartsWith(bytes, "\xFF\xFE\0\0", 4);
+    const bool utf32be = StartsWith(bytes, "\0\0\xFE\xFF", 4);
+    if (utf32le || utf32be) {
+        std::string out;
+        size_t i = 4;
+        for (; i + 4 <= bytes.size(); i += 4) {
+            json::appendUtf8(out, utf32le
+                ? (at(i + 3) << 24 | at(i + 2) << 16 | at(i + 1) << 8 | at(i))
+                : (at(i) << 24 | at(i + 1) << 16 | at(i + 2) << 8 | at(i + 3)));
+        }
+        if (i < bytes.size()) json::appendUtf8(out, 0xFFFD);   // 1-3 bytes left over
+        return out;
+    }
+
+    const bool utf16le = StartsWith(bytes, "\xFF\xFE", 2);
+    const bool utf16be = StartsWith(bytes, "\xFE\xFF", 2);
+    if (utf16le || utf16be) {
+        const auto unit = [&](size_t i) {
+            return utf16le ? (at(i + 1) << 8 | at(i)) : (at(i) << 8 | at(i + 1));
+        };
+        std::string out;
+        size_t i = 2;
+        while (i + 2 <= bytes.size()) {
+            unsigned cp = unit(i);
+            i += 2;
+            // A high surrogate joins only with a low one right after it;
+            // anything else is unpaired, and appendUtf8 makes it U+FFFD.
+            if (cp >= 0xD800 && cp <= 0xDBFF && i + 2 <= bytes.size()) {
+                const unsigned lo = unit(i);
+                if (lo >= 0xDC00 && lo <= 0xDFFF) {
+                    cp = 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00);
+                    i += 2;
+                }
+            }
+            json::appendUtf8(out, cp);
+        }
+        if (i < bytes.size()) json::appendUtf8(out, 0xFFFD);   // odd byte left over
+        return out;
+    }
+    return ReplaceIllFormedUtf8(std::move(bytes), 0);
+}
 
 std::wstring ChooseAppDataDir(const std::wstring& knownFolder, const std::wstring& envAppData) {
     for (const std::wstring* candidate : { &knownFolder, &envAppData }) {
@@ -255,6 +351,7 @@ ConfigLoadResult LoadConfigFile(const std::wstring& path) {
     switch (ReadFileUtf8(path, text)) {
         case ReadResult::Missing: r.status = ConfigLoadStatus::Missing;    return r;
         case ReadResult::Failed:  r.status = ConfigLoadStatus::ReadFailed; return r;
+        case ReadResult::TooLarge: r.status = ConfigLoadStatus::TooLarge;  return r;
         case ReadResult::Ok:      break;
     }
     if (std::optional<Config> parsed = ParseConfig(text)) {
@@ -339,6 +436,8 @@ ConfigEditResult EditConfigFileBool(const std::wstring& path, bool Config::* fie
     switch (ReadFileUtf8(path, text)) {
         case ReadResult::Failed:
             return ConfigEditResult::ReadFailed;
+        case ReadResult::TooLarge:
+            return ConfigEditResult::TooLarge;
         case ReadResult::Missing: {
             Config c = displayed;
             c.*field = value;
