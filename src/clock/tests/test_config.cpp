@@ -234,6 +234,37 @@ TEST(config_decode_leaves_plain_utf8_alone_and_drops_its_bom) {
     CHECK_EQ(DecodeConfigBytes(noBom), noBom);
 }
 
+TEST(config_decode_replaces_ill_formed_utf8_per_maximal_subpart) {
+    const std::string r = "\xEF\xBF\xBD";
+    // Well-formed text, from one to four bytes, is untouched.
+    const std::string ok = "A\xC3\xA9\xE3\x81\x82\xF0\x9F\x97\xBC\xF4\x8F\xBF\xBF";
+    CHECK_EQ(DecodeConfigBytes(ok), ok);
+    CHECK_EQ(DecodeConfigBytes("\xEF\xBB\xBF" + ok), ok);
+    // A byte that cannot start a sequence, with and without the UTF-8 BOM.
+    CHECK_EQ(DecodeConfigBytes("A\xFF" "B"), "A" + r + "B");
+    CHECK_EQ(DecodeConfigBytes("\xEF\xBB\xBF" "A\x80" "B"), "A" + r + "B");
+    // Overlongs, a surrogate and a code point past U+10FFFF: the second
+    // byte is out of range, so each byte is its own maximal subpart.
+    CHECK_EQ(DecodeConfigBytes("\xC0\x80"), r + r);
+    CHECK_EQ(DecodeConfigBytes("\xE0\x80\x80"), r + r + r);
+    CHECK_EQ(DecodeConfigBytes("\xED\xA0\x80"), r + r + r);
+    CHECK_EQ(DecodeConfigBytes("\xF4\x90\x80\x80"), r + r + r + r);
+    // A truncated sequence is one U+FFFD, and the byte after it is kept.
+    CHECK_EQ(DecodeConfigBytes("\xF0\x9F\x97" "A"), r + "A");
+    CHECK_EQ(DecodeConfigBytes("A\xE3\x81"), "A" + r);
+    CHECK_EQ(DecodeConfigBytes("\xE3\x81\xE3\x81\x82"), r + "\xE3\x81\x82");
+}
+
+TEST(config_load_file_shows_ill_formed_utf8_as_replacement_characters) {
+    // The settings app reads this label as "Osaka�" too
+    // (tests/settings/Program.cs).
+    TempFile f("bad_utf8");
+    f.Write("{\"cities\":[{\"label\":\"Osaka\xFF\",\"tz\":\"Asia/Tokyo\"}]}");
+    ConfigLoadResult r = LoadConfigFile(f.path);
+    CHECK(r.status == ConfigLoadStatus::Ok);
+    CHECK_EQ(r.config.cities[0].label, std::string("Osaka\xEF\xBF\xBD"));
+}
+
 TEST(config_decode_reads_utf16_in_both_byte_orders) {
     CHECK_EQ(DecodeConfigBytes(Utf16(Bin({ 0xFF, 0xFE }), "{\"a\":1}", false)), std::string("{\"a\":1}"));
     CHECK_EQ(DecodeConfigBytes(Utf16(Bin({ 0xFE, 0xFF }), "{\"a\":1}", true)), std::string("{\"a\":1}"));

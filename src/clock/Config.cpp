@@ -137,10 +137,56 @@ static bool StartsWith(const std::string& s, const char* bom, size_t n) {
     return s.size() >= n && s.compare(0, n, bom, n) == 0;
 }
 
+// UTF-8 with every ill-formed sequence replaced by one U+FFFD per maximal
+// subpart (Unicode 3.9, U+FFFD substitution), which is what .NET's UTF-8
+// decoder does. Without this, a stray byte would reach a label in the gadget
+// as is while the settings app read U+FFFD (#87). Well-formed text is
+// returned unchanged.
+static std::string ReplaceIllFormedUtf8(std::string bytes, size_t start) {
+    const auto at = [&](size_t i) { return (unsigned)(unsigned char)bytes[i]; };
+    std::string out;
+    out.reserve(bytes.size() - start);
+    size_t i = start;
+    while (i < bytes.size()) {
+        const unsigned b0 = at(i);
+        if (b0 < 0x80) { out += (char)b0; ++i; continue; }
+
+        // Table 3-7: the length a lead byte asks for, and the range its
+        // second byte must fall in (it rules out overlongs, surrogates and
+        // code points past U+10FFFF). Later bytes are all 80..BF.
+        size_t need = 0;
+        unsigned lo = 0x80, hi = 0xBF;
+        if (b0 >= 0xC2 && b0 <= 0xDF)      need = 1;
+        else if (b0 == 0xE0)               { need = 2; lo = 0xA0; }
+        else if (b0 == 0xED)               { need = 2; hi = 0x9F; }
+        else if (b0 >= 0xE1 && b0 <= 0xEF) need = 2;
+        else if (b0 == 0xF0)               { need = 3; lo = 0x90; }
+        else if (b0 == 0xF4)               { need = 3; hi = 0x8F; }
+        else if (b0 >= 0xF1 && b0 <= 0xF3) need = 3;
+
+        size_t got = 0;   // continuation bytes that fit
+        while (got < need && i + 1 + got < bytes.size()) {
+            const unsigned b = at(i + 1 + got);
+            const bool fits = got == 0 ? (b >= lo && b <= hi) : (b >= 0x80 && b <= 0xBF);
+            if (!fits) break;
+            ++got;
+        }
+        if (need != 0 && got == need) {
+            out.append(bytes, i, need + 1);
+        } else {
+            // The lead byte and the continuation bytes that fit are one
+            // maximal subpart; the byte that did not fit starts afresh.
+            json::appendUtf8(out, 0xFFFD);
+        }
+        i += 1 + got;
+    }
+    return out;
+}
+
 std::string DecodeConfigBytes(std::string bytes) {
     const auto at = [&](size_t i) { return (unsigned)(unsigned char)bytes[i]; };
 
-    if (StartsWith(bytes, "\xEF\xBB\xBF", 3)) return bytes.substr(3);
+    if (StartsWith(bytes, "\xEF\xBB\xBF", 3)) return ReplaceIllFormedUtf8(std::move(bytes), 3);
 
     // UTF-32LE's BOM begins with UTF-16LE's, so it is checked first; .NET
     // decides the same way.
@@ -183,7 +229,7 @@ std::string DecodeConfigBytes(std::string bytes) {
         if (i < bytes.size()) json::appendUtf8(out, 0xFFFD);   // odd byte left over
         return out;
     }
-    return bytes;
+    return ReplaceIllFormedUtf8(std::move(bytes), 0);
 }
 
 std::wstring ChooseAppDataDir(const std::wstring& knownFolder, const std::wstring& envAppData) {

@@ -104,9 +104,9 @@ constexpr long long kMaxConfigFileBytes = 1 << 20;
 // File.ReadAllText reads them: a UTF-8 BOM is dropped, and a UTF-32 or UTF-16
 // BOM (either byte order) is decoded to UTF-8, so a file saved by Windows
 // PowerShell 5.1's Out-File opens in both apps (#87). Without a BOM the bytes
-// are returned as they are. A sequence that cannot be decoded (an unpaired
-// surrogate, a dangling odd byte, a code point past U+10FFFF) becomes U+FFFD,
-// as in .NET. Pure, so it is unit testable.
+// are read as UTF-8. A sequence that cannot be decoded (ill-formed UTF-8, an
+// unpaired surrogate, a dangling odd byte, a code point past U+10FFFF) becomes
+// U+FFFD, as in .NET. Pure, so it is unit testable.
 std::string DecodeConfigBytes(std::string bytes);
 
 enum class ConfigLoadStatus {

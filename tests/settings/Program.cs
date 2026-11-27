@@ -44,6 +44,14 @@ try
     Check(status == ConfigLoadStatus.Ok && utf16.Cities[0].Label == "Osaka" && utf16.Opacity == 40,
           "UTF-16 file: loads");
 
+    // Ill-formed UTF-8 reads as U+FFFD; the gadget's DecodeConfigBytes matches.
+    File.WriteAllBytes(path, [.. System.Text.Encoding.ASCII.GetBytes(
+        "{\"cities\":[{\"label\":\"Osaka"), 0xFF, .. System.Text.Encoding.ASCII.GetBytes(
+        "\",\"tz\":\"Asia/Tokyo\"}]}")]);
+    var badUtf8 = ConfigModel.LoadFile(path, out status);
+    Check(status == ConfigLoadStatus.Ok && badUtf8.Cities[0].Label == "Osaka�",
+          "ill-formed UTF-8 file: U+FFFD");
+
     string Padded(long bytes) => doc + new string(' ', (int)(bytes - doc.Length));
     File.WriteAllText(path, Padded(ConfigModel.MaxFileBytes));
     var atCap = ConfigModel.LoadFile(path, out status);
