@@ -235,6 +235,39 @@ TEST(json_rejects_malformed_input) {
     CHECK_THROWS(json::parse("tru"));             // truncated literal
 }
 
+// ---- numbers outside double's range (#87) ---------------------------------
+// One such number anywhere used to throw out of the parser and reject the
+// whole config.json, while the settings app opened it.
+
+namespace {
+// The parsed number, or NaN when parse threw.
+double ParsedNumber(const char* text) {
+    try { return json::parse(text).num; }
+    catch (...) { return std::numeric_limits<double>::quiet_NaN(); }
+}
+} // namespace
+
+TEST(json_overflowing_numbers_parse_as_infinity) {
+    CHECK(ParsedNumber("1e400") == std::numeric_limits<double>::infinity());
+    CHECK(ParsedNumber("-1e400") == -std::numeric_limits<double>::infinity());
+    CHECK(ParsedNumber("1E+999") == std::numeric_limits<double>::infinity());
+    CHECK(ParsedNumber("123456789e400") == std::numeric_limits<double>::infinity());
+}
+
+TEST(json_underflowing_numbers_parse_as_zero_or_subnormal) {
+    CHECK(ParsedNumber("1e-400") == 0.0);
+    CHECK(ParsedNumber("-1e-400") == 0.0);
+    const double tiny = ParsedNumber("4.9e-324");   // the smallest subnormal
+    CHECK(tiny > 0.0 && tiny < std::numeric_limits<double>::min());
+}
+
+TEST(json_out_of_range_numbers_inside_a_document) {
+    json::Value v = json::parse(R"({"x": 1e999, "opacity": 40})");
+    CHECK(v.isObject());
+    CHECK_EQ(v.getInt("opacity", 0), 40);
+    CHECK_EQ(v.getInt("x", 85), 85);   // getInt's range check gives the default
+}
+
 // ---- surrogate pairs ------------------------------------------------------
 // System.Text.Json escapes every non-ASCII character, so a non-BMP character
 // only ever reaches the parser as a \uD8xx\uDCxx pair.

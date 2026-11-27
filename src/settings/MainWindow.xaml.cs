@@ -49,7 +49,7 @@ public partial class MainWindow : FluentWindow
         _baseline = BuildConfig();
         _cities.CollectionChanged += (_, _) => UpdateAnalogWarning();
 
-        if (status is ConfigLoadStatus.Unreadable or ConfigLoadStatus.Invalid)
+        if (status is ConfigLoadStatus.Unreadable or ConfigLoadStatus.TooLarge or ConfigLoadStatus.Invalid)
         {
             _backupBeforeSave = true;
             Loaded += (_, _) => WarnConfigNotLoaded(status);
@@ -66,9 +66,12 @@ public partial class MainWindow : FluentWindow
 
     private void WarnConfigNotLoaded(ConfigLoadStatus status)
     {
-        var reason = status == ConfigLoadStatus.Invalid
-            ? Strings.ConfigInvalid
-            : Strings.ConfigUnreadable;
+        var reason = status switch
+        {
+            ConfigLoadStatus.Invalid => Strings.ConfigInvalid,
+            ConfigLoadStatus.TooLarge => Strings.ConfigTooLarge,
+            _ => Strings.ConfigUnreadable,
+        };
         System.Windows.MessageBox.Show(this,
             Strings.ConfigNotLoaded(reason, ConfigModel.BackupPath),
             Strings.WindowTitle,

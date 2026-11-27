@@ -12,6 +12,7 @@ struct UiStrings {
     // Reported once a config reload has kept failing.
     const wchar_t* configParseFailed;
     const wchar_t* configUnreadable;
+    const wchar_t* configTooLarge;
     const wchar_t* configKeepingLast;
 
     // Reported once at startup when a Win32 call the settings depend on failed.
@@ -23,6 +24,7 @@ struct UiStrings {
     // A menu toggle could not be written to config.json.
     const wchar_t* saveParseFailed;
     const wchar_t* saveUnreadable;
+    const wchar_t* saveTooLarge;
     const wchar_t* saveWriteFailed;
 
     const wchar_t* menuSettings;

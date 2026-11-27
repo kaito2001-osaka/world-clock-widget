@@ -94,10 +94,26 @@ void TruncateUtf8(std::string& s, size_t maxCodePoints);
 // falls back to its DefaultConfig() value on its own.
 std::optional<Config> ParseConfig(const std::string& text);
 
+// The largest config.json either app reads, in bytes on disk. Ours are a few
+// hundred bytes; anything larger is not a settings file. The settings app
+// (ConfigModel.MaxFileBytes) uses the same number, so both refuse the same
+// files for the same reason (#87).
+constexpr long long kMaxConfigFileBytes = 1 << 20;
+
+// The bytes of a config file as UTF-8 text, the way the settings app's
+// File.ReadAllText reads them: a UTF-8 BOM is dropped, and a UTF-32 or UTF-16
+// BOM (either byte order) is decoded to UTF-8, so a file saved by Windows
+// PowerShell 5.1's Out-File opens in both apps (#87). Without a BOM the bytes
+// are returned as they are. A sequence that cannot be decoded (an unpaired
+// surrogate, a dangling odd byte, a code point past U+10FFFF) becomes U+FFFD,
+// as in .NET. Pure, so it is unit testable.
+std::string DecodeConfigBytes(std::string bytes);
+
 enum class ConfigLoadStatus {
     Ok,           // parsed; `config` holds the file's settings
     Missing,      // there is no file
     ReadFailed,   // it exists but could not be read (locked, access denied)
+    TooLarge,     // it is larger than kMaxConfigFileBytes; not read
     ParseFailed,  // it was read but is not a JSON object
 };
 
@@ -121,6 +137,7 @@ std::optional<std::string> EditConfigText(const std::string& text, const std::st
 enum class ConfigEditResult {
     Written,
     ReadFailed,    // the file exists but could not be read; left alone
+    TooLarge,      // the file is larger than kMaxConfigFileBytes; left alone
     ParseFailed,   // the file is not a JSON object; left alone
     WriteFailed,   // the edit could not be written; the old file stands
 };

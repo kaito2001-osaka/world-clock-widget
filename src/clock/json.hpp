@@ -10,6 +10,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <stdexcept>
 
 namespace json {
@@ -72,6 +73,27 @@ public:
         obj.emplace_back(key, std::move(v));
     }
 };
+
+// Always emits well-formed UTF-8. A lone surrogate or an out-of-range code
+// point has no valid encoding, so it becomes U+FFFD rather than the
+// invalid three-byte sequence that would otherwise reach MultiByteToWideChar.
+inline void appendUtf8(std::string& out, unsigned cp) {
+    if (cp > 0x10FFFF || (cp >= 0xD800 && cp <= 0xDFFF)) cp = 0xFFFD;
+    if (cp < 0x80) out += (char)cp;
+    else if (cp < 0x800) {
+        out += (char)(0xC0 | (cp >> 6));
+        out += (char)(0x80 | (cp & 0x3F));
+    } else if (cp < 0x10000) {
+        out += (char)(0xE0 | (cp >> 12));
+        out += (char)(0x80 | ((cp >> 6) & 0x3F));
+        out += (char)(0x80 | (cp & 0x3F));
+    } else {
+        out += (char)(0xF0 | (cp >> 18));
+        out += (char)(0x80 | ((cp >> 12) & 0x3F));
+        out += (char)(0x80 | ((cp >> 6) & 0x3F));
+        out += (char)(0x80 | (cp & 0x3F));
+    }
+}
 
 // ---------- Parser ----------
 class Parser {
@@ -155,7 +177,13 @@ private:
         }
         std::string n = s_.substr(start, i_ - start);
         if (n.empty()) fail("invalid number");
-        Value v; v.type = Type::Number; v.num = std::stod(n);
+        // strtod rather than stod: on ERANGE stod throws, and one "1e400"
+        // anywhere (even under a key we ignore) would reject the whole file.
+        // strtod's result then is +-HUGE_VAL or a value at or near zero,
+        // which getInt's range check and the settings app treat alike (#87).
+        char* end = nullptr;
+        Value v; v.type = Type::Number; v.num = std::strtod(n.c_str(), &end);
+        if (end != n.c_str() + n.size()) fail("invalid number");
         return v;
     }
 
@@ -194,7 +222,7 @@ private:
                             else
                                 i_ = save;  // not a low surrogate: re-read it as its own escape
                         }
-                        appendUtf8(out, cp);
+                        json::appendUtf8(out, cp);
                         break;
                     }
                     default: fail("bad escape");
@@ -218,27 +246,6 @@ private:
             else fail("bad \\u");
         }
         return v;
-    }
-
-    // Always emits well-formed UTF-8. A lone surrogate or an out-of-range code
-    // point has no valid encoding, so it becomes U+FFFD rather than the
-    // invalid three-byte sequence that would otherwise reach MultiByteToWideChar.
-    static void appendUtf8(std::string& out, unsigned cp) {
-        if (cp > 0x10FFFF || (cp >= 0xD800 && cp <= 0xDFFF)) cp = 0xFFFD;
-        if (cp < 0x80) out += (char)cp;
-        else if (cp < 0x800) {
-            out += (char)(0xC0 | (cp >> 6));
-            out += (char)(0x80 | (cp & 0x3F));
-        } else if (cp < 0x10000) {
-            out += (char)(0xE0 | (cp >> 12));
-            out += (char)(0x80 | ((cp >> 6) & 0x3F));
-            out += (char)(0x80 | (cp & 0x3F));
-        } else {
-            out += (char)(0xF0 | (cp >> 18));
-            out += (char)(0x80 | ((cp >> 12) & 0x3F));
-            out += (char)(0x80 | ((cp >> 6) & 0x3F));
-            out += (char)(0x80 | (cp & 0x3F));
-        }
     }
 
     Value parseArray() {

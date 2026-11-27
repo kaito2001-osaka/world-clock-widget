@@ -906,5 +906,217 @@
       "theme": "dark"
     },
     "warnings": []
+  },
+  {
+    "name": "overflowing number falls back",
+    "input": "{\"cities\":[{\"label\":\"Osaka\",\"tz\":\"Asia/Tokyo\"}],\"opacity\":1e400}",
+    "accepted": true,
+    "expected": {
+      "cities": [
+        {
+          "label": "Osaka",
+          "tz": "Asia/Tokyo"
+        }
+      ],
+      "displayMode": "digital",
+      "layout": "vertical",
+      "hourFormat": 24,
+      "showDate": true,
+      "dateFormat": "ddd, MMM d",
+      "showSeconds": false,
+      "size": "medium",
+      "opacity": 85,
+      "alwaysOnTop": false,
+      "lockPosition": false,
+      "launchAtStartup": false,
+      "theme": "dark"
+    },
+    "warnings": [
+      "opacity"
+    ]
+  },
+  {
+    "name": "negative overflowing number falls back",
+    "input": "{\"cities\":[{\"label\":\"Osaka\",\"tz\":\"Asia/Tokyo\"}],\"opacity\":-1e400}",
+    "accepted": true,
+    "expected": {
+      "cities": [
+        {
+          "label": "Osaka",
+          "tz": "Asia/Tokyo"
+        }
+      ],
+      "displayMode": "digital",
+      "layout": "vertical",
+      "hourFormat": 24,
+      "showDate": true,
+      "dateFormat": "ddd, MMM d",
+      "showSeconds": false,
+      "size": "medium",
+      "opacity": 85,
+      "alwaysOnTop": false,
+      "lockPosition": false,
+      "launchAtStartup": false,
+      "theme": "dark"
+    },
+    "warnings": [
+      "opacity"
+    ]
+  },
+  {
+    "name": "underflowing number reads as zero",
+    "input": "{\"cities\":[{\"label\":\"Osaka\",\"tz\":\"Asia/Tokyo\"}],\"opacity\":1e-400}",
+    "accepted": true,
+    "expected": {
+      "cities": [
+        {
+          "label": "Osaka",
+          "tz": "Asia/Tokyo"
+        }
+      ],
+      "displayMode": "digital",
+      "layout": "vertical",
+      "hourFormat": 24,
+      "showDate": true,
+      "dateFormat": "ddd, MMM d",
+      "showSeconds": false,
+      "size": "medium",
+      "opacity": 10,
+      "alwaysOnTop": false,
+      "lockPosition": false,
+      "launchAtStartup": false,
+      "theme": "dark"
+    },
+    "warnings": []
+  },
+  {
+    "name": "overflowing number under an unknown key is ignored",
+    "input": "{\"cities\":[{\"label\":\"Osaka\",\"tz\":\"Asia/Tokyo\"}],\"x\":1e999}",
+    "accepted": true,
+    "expected": {
+      "cities": [
+        {
+          "label": "Osaka",
+          "tz": "Asia/Tokyo"
+        }
+      ],
+      "displayMode": "digital",
+      "layout": "vertical",
+      "hourFormat": 24,
+      "showDate": true,
+      "dateFormat": "ddd, MMM d",
+      "showSeconds": false,
+      "size": "medium",
+      "opacity": 85,
+      "alwaysOnTop": false,
+      "lockPosition": false,
+      "launchAtStartup": false,
+      "theme": "dark"
+    },
+    "warnings": []
+  },
+  {
+    "name": "unpaired high surrogate becomes U+FFFD",
+    "input": "{\"cities\":[{\"label\":\"Osaka\\ud83d\",\"tz\":\"Asia/Tokyo\"}]}",
+    "accepted": true,
+    "expected": {
+      "cities": [
+        {
+          "label": "Osaka\ufffd",
+          "tz": "Asia/Tokyo"
+        }
+      ],
+      "displayMode": "digital",
+      "layout": "vertical",
+      "hourFormat": 24,
+      "showDate": true,
+      "dateFormat": "ddd, MMM d",
+      "showSeconds": false,
+      "size": "medium",
+      "opacity": 85,
+      "alwaysOnTop": false,
+      "lockPosition": false,
+      "launchAtStartup": false,
+      "theme": "dark"
+    },
+    "warnings": []
+  },
+  {
+    "name": "unpaired low surrogate becomes U+FFFD",
+    "input": "{\"cities\":[{\"label\":\"\\udc00Osaka\",\"tz\":\"Asia/Tokyo\"}]}",
+    "accepted": true,
+    "expected": {
+      "cities": [
+        {
+          "label": "\ufffdOsaka",
+          "tz": "Asia/Tokyo"
+        }
+      ],
+      "displayMode": "digital",
+      "layout": "vertical",
+      "hourFormat": 24,
+      "showDate": true,
+      "dateFormat": "ddd, MMM d",
+      "showSeconds": false,
+      "size": "medium",
+      "opacity": 85,
+      "alwaysOnTop": false,
+      "lockPosition": false,
+      "launchAtStartup": false,
+      "theme": "dark"
+    },
+    "warnings": []
+  },
+  {
+    "name": "high surrogate before a pair becomes U+FFFD",
+    "input": "{\"cities\":[{\"label\":\"\\ud83d\\ud83d\\ude00\",\"tz\":\"Asia/Tokyo\"}]}",
+    "accepted": true,
+    "expected": {
+      "cities": [
+        {
+          "label": "\ufffd\ud83d\ude00",
+          "tz": "Asia/Tokyo"
+        }
+      ],
+      "displayMode": "digital",
+      "layout": "vertical",
+      "hourFormat": 24,
+      "showDate": true,
+      "dateFormat": "ddd, MMM d",
+      "showSeconds": false,
+      "size": "medium",
+      "opacity": 85,
+      "alwaysOnTop": false,
+      "lockPosition": false,
+      "launchAtStartup": false,
+      "theme": "dark"
+    },
+    "warnings": []
+  },
+  {
+    "name": "unpaired surrogate in an unknown key is ignored",
+    "input": "{\"\\ud83d\":1,\"cities\":[{\"label\":\"Osaka\",\"tz\":\"Asia/Tokyo\"}]}",
+    "accepted": true,
+    "expected": {
+      "cities": [
+        {
+          "label": "Osaka",
+          "tz": "Asia/Tokyo"
+        }
+      ],
+      "displayMode": "digital",
+      "layout": "vertical",
+      "hourFormat": 24,
+      "showDate": true,
+      "dateFormat": "ddd, MMM d",
+      "showSeconds": false,
+      "size": "medium",
+      "opacity": 85,
+      "alwaysOnTop": false,
+      "lockPosition": false,
+      "launchAtStartup": false,
+      "theme": "dark"
+    },
+    "warnings": []
   }
 ]

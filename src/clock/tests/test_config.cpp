@@ -199,6 +199,98 @@ TEST(config_load_file_reports_a_locked_file_as_unreadable) {
     CHECK(LoadConfigFile(f.path).status == ConfigLoadStatus::Ok);
 }
 
+// ---- encodings and the size cap, as the settings app reads them (#87) -----
+
+namespace {
+std::string Bin(std::initializer_list<int> bytes) {
+    std::string s;
+    for (int b : bytes) s += (char)b;
+    return s;
+}
+
+// `ascii` in UTF-16 (each byte widened), after the given BOM.
+std::string Utf16(const std::string& bom, const std::string& ascii, bool bigEndian) {
+    std::string s = bom;
+    for (char c : ascii) {
+        if (bigEndian) { s += '\0'; s += c; }
+        else           { s += c; s += '\0'; }
+    }
+    return s;
+}
+
+// A valid document of exactly `bytes` bytes, padded with whitespace.
+std::string DocumentOfSize(size_t bytes) {
+    const std::string head = R"({"cities":[{"label":"Osaka","tz":"Asia/Tokyo"}]})";
+    return head + std::string(bytes - head.size(), ' ');
+}
+} // namespace
+
+TEST(config_decode_leaves_plain_utf8_alone_and_drops_its_bom) {
+    CHECK_EQ(DecodeConfigBytes("{\"a\":1}"), std::string("{\"a\":1}"));
+    CHECK_EQ(DecodeConfigBytes("\xEF\xBB\xBF{}"), std::string("{}"));
+    CHECK_EQ(DecodeConfigBytes(""), std::string());
+    // Only a BOM says UTF-16; without one the bytes are not guessed at.
+    const std::string noBom = Utf16("", "{}", false);
+    CHECK_EQ(DecodeConfigBytes(noBom), noBom);
+}
+
+TEST(config_decode_reads_utf16_in_both_byte_orders) {
+    CHECK_EQ(DecodeConfigBytes(Utf16(Bin({ 0xFF, 0xFE }), "{\"a\":1}", false)), std::string("{\"a\":1}"));
+    CHECK_EQ(DecodeConfigBytes(Utf16(Bin({ 0xFE, 0xFF }), "{\"a\":1}", true)), std::string("{\"a\":1}"));
+    // U+3042 and U+1F5FC (a surrogate pair) come out as UTF-8.
+    CHECK_EQ(DecodeConfigBytes(Bin({ 0xFF, 0xFE, 0x42, 0x30, 0x3D, 0xD8, 0xFC, 0xDD })),
+             std::string("\xE3\x81\x82\xF0\x9F\x97\xBC"));
+    CHECK_EQ(DecodeConfigBytes(Bin({ 0xFE, 0xFF, 0x30, 0x42, 0xD8, 0x3D, 0xDD, 0xFC })),
+             std::string("\xE3\x81\x82\xF0\x9F\x97\xBC"));
+}
+
+TEST(config_decode_replaces_what_utf16_cannot_decode) {
+    const std::string fffd = "\xEF\xBF\xBD";
+    // A high surrogate before a non-surrogate, and one at the end.
+    CHECK_EQ(DecodeConfigBytes(Bin({ 0xFF, 0xFE, 0x3D, 0xD8, 0x41, 0x00, 0x3D, 0xD8 })),
+             fffd + "A" + fffd);
+    // A low surrogate on its own.
+    CHECK_EQ(DecodeConfigBytes(Bin({ 0xFF, 0xFE, 0xFC, 0xDD, 0x41, 0x00 })), fffd + "A");
+    // An odd byte left over.
+    CHECK_EQ(DecodeConfigBytes(Bin({ 0xFF, 0xFE, 0x41, 0x00, 0x42 })), "A" + fffd);
+}
+
+TEST(config_decode_reads_utf32_in_both_byte_orders) {
+    // FF FE 00 00 is UTF-32LE, not UTF-16LE followed by U+0000.
+    CHECK_EQ(DecodeConfigBytes(Bin({ 0xFF, 0xFE, 0, 0, '{', 0, 0, 0, '}', 0, 0, 0 })), std::string("{}"));
+    CHECK_EQ(DecodeConfigBytes(Bin({ 0, 0, 0xFE, 0xFF, 0, 0, 0, '{', 0, 0, 0, '}' })), std::string("{}"));
+    CHECK_EQ(DecodeConfigBytes(Bin({ 0xFF, 0xFE, 0, 0, 0xFC, 0xF5, 0x01, 0 })),
+             std::string("\xF0\x9F\x97\xBC"));
+    // Past U+10FFFF, a surrogate code point, and a partial unit.
+    CHECK_EQ(DecodeConfigBytes(Bin({ 0xFF, 0xFE, 0, 0, 0, 0, 0x11, 0, 0x00, 0xD8, 0, 0, 'A' })),
+             std::string("\xEF\xBF\xBD\xEF\xBF\xBD\xEF\xBF\xBD"));
+}
+
+TEST(config_load_file_reads_a_utf16_file_with_a_bom) {
+    // What Windows PowerShell 5.1's `>` and Out-File write by default.
+    TempFile f("utf16");
+    f.Write(Utf16(Bin({ 0xFF, 0xFE }),
+                  R"({"cities":[{"label":"Osaka","tz":"Asia/Tokyo"}],"opacity":40})", false));
+    ConfigLoadResult r = LoadConfigFile(f.path);
+    CHECK(r.status == ConfigLoadStatus::Ok);
+    CHECK_EQ(r.config.cities.size(), (size_t)1);
+    CHECK_EQ(r.config.cities[0].label, std::string("Osaka"));
+    CHECK_EQ(r.config.opacity, 40);
+}
+
+TEST(config_load_file_reports_a_file_over_1_mib_as_too_large) {
+    TempFile f("size_cap");
+    f.Write(DocumentOfSize((size_t)kMaxConfigFileBytes));
+    ConfigLoadResult atCap = LoadConfigFile(f.path);
+    CHECK(atCap.status == ConfigLoadStatus::Ok);
+    CHECK_EQ(atCap.config.cities[0].label, std::string("Osaka"));
+
+    f.Write(DocumentOfSize((size_t)kMaxConfigFileBytes + 1));
+    ConfigLoadResult over = LoadConfigFile(f.path);
+    CHECK(over.status == ConfigLoadStatus::TooLarge);
+    CHECK(over.config == DefaultConfig());
+}
+
 // ---- writing (Win32 file I/O, #22) ----------------------------------------
 
 namespace {
@@ -414,6 +506,27 @@ TEST(config_edit_file_leaves_an_unreadable_file_alone) {
 
     CHECK(r == ConfigEditResult::ReadFailed);
     CHECK_EQ(f.Read(), in);
+}
+
+TEST(config_edit_file_leaves_a_file_over_1_mib_alone) {
+    TempFile f("edit_too_large");
+    const std::string in = DocumentOfSize((size_t)kMaxConfigFileBytes + 1);
+    f.Write(in);
+    CHECK(EditConfigFileBool(f.path, &Config::lockPosition, true, DefaultConfig()) ==
+          ConfigEditResult::TooLarge);
+    CHECK(f.Read() == in);
+    CHECK(!Exists(f.path + L".gadget.tmp"));
+}
+
+TEST(config_edit_file_rewrites_a_utf16_file_as_utf8_keeping_its_keys) {
+    TempFile f("edit_utf16");
+    const std::string doc = R"({"cities":[{"label":"Osaka","tz":"Asia/Tokyo"}],"custom":"kept"})";
+    f.Write(Utf16(Bin({ 0xFF, 0xFE }), doc, false));
+    CHECK(EditConfigFileBool(f.path, &Config::lockPosition, true, DefaultConfig()) ==
+          ConfigEditResult::Written);
+    const std::string after = f.Read();
+    CHECK_EQ(after, WithKey(doc, "lockPosition", true));
+    CHECK(LoadConfigFile(f.path).config.lockPosition);
 }
 
 // ---- reload no-op (#27) ---------------------------------------------------

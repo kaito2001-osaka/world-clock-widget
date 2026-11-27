@@ -23,6 +23,7 @@ public enum ConfigLoadStatus
     Ok,          // parsed from config.json
     Missing,     // no file yet
     Unreadable,  // exists but could not be read (locked, access denied)
+    TooLarge,    // larger than ConfigModel.MaxFileBytes; not read
     Invalid,     // read, but not a config this app can parse
 }
 
@@ -49,6 +50,10 @@ public sealed class ConfigModel
     public const int MaxLabelLength = 64;
     public const int MaxDateFormatLength = 64;
     public const int MaxCities = 32;
+
+    // The gadget's kMaxConfigFileBytes, in bytes on disk: both apps refuse the
+    // same files, and say it is the size (#87).
+    public const long MaxFileBytes = 1 << 20;
 
     [JsonIgnore] public List<string> CorrectedFields { get; } = new();
 
@@ -89,17 +94,27 @@ public sealed class ConfigModel
     // Anything other than Ok comes back with the defaults, and the status says
     // so: the caller must not save those over a file that still holds the
     // user's settings without telling them first.
-    public static ConfigModel Load(out ConfigLoadStatus status)
+    public static ConfigModel Load(out ConfigLoadStatus status) => LoadFile(ConfigPath, out status);
+
+    // Load's steps on any path, so tests never touch the user's config.json.
+    // File.ReadAllText decodes a UTF-8, UTF-16 or UTF-32 BOM; the gadget's
+    // DecodeConfigBytes follows it.
+    internal static ConfigModel LoadFile(string path, out ConfigLoadStatus status)
     {
         string json;
         try
         {
-            if (!File.Exists(ConfigPath))
+            if (!File.Exists(path))
             {
                 status = ConfigLoadStatus.Missing;
                 return Default();
             }
-            json = File.ReadAllText(ConfigPath);
+            if (new FileInfo(path).Length > MaxFileBytes)
+            {
+                status = ConfigLoadStatus.TooLarge;
+                return Default();
+            }
+            json = File.ReadAllText(path);
         }
         catch
         {
@@ -175,7 +190,9 @@ public sealed class ConfigModel
         }
         catch (InvalidOperationException)
         {
-            // System.Text.Json cannot decode an unpaired surrogate escape.
+            // String values with an unpaired surrogate escape are decoded by
+            // ConfigReader.String; this only guards anything else that would
+            // ask System.Text.Json to decode one.
             return null;
         }
     }
@@ -191,16 +208,35 @@ public sealed class ConfigModel
         public JsonElement Find(JsonElement parent, string key)
         {
             foreach (var property in parent.EnumerateObject())
-                if (property.NameEquals(key)) return property.Value;
+                if (NameIs(property, key)) return property.Value;
             return default;
+        }
+
+        // NameEquals throws on a name with an unpaired surrogate escape. Such a
+        // name is never one of ours (the gadget reads it with U+FFFD), so it is
+        // an unknown key and is skipped, not a reason to reject the file (#87).
+        private static bool NameIs(JsonProperty property, string key)
+        {
+            try { return property.NameEquals(key); }
+            catch (InvalidOperationException) { return false; }
         }
 
         public string String(JsonElement parent, string key, string fallback, string prefix = "")
         {
             var value = Find(parent, key);
-            if (value.ValueKind == JsonValueKind.String) return value.GetString()!;
+            if (value.ValueKind == JsonValueKind.String) return Decode(value);
             if (value.ValueKind != JsonValueKind.Undefined) Correct(prefix + key);
             return fallback;
+        }
+
+        // GetString throws on an unpaired surrogate escape ("\ud83d"), which
+        // used to reject the whole file. The gadget shows U+FFFD in its place
+        // (#6), so decode it the same way (#87). Not a correction: like a
+        // truncated label, both apps show the same value without a warning.
+        private static string Decode(JsonElement value)
+        {
+            try { return value.GetString()!; }
+            catch (InvalidOperationException) { return UnescapeLenient(value.GetRawText()); }
         }
 
         public bool Bool(JsonElement parent, string key, bool fallback)
@@ -222,6 +258,42 @@ public sealed class ConfigModel
             if (value.ValueKind != JsonValueKind.Undefined) Correct(key);
             return fallback;
         }
+    }
+
+    // A JSON string token (quotes included, already validated by JsonDocument)
+    // decoded like the gadget's parseString: a high surrogate pairs only with
+    // a low surrogate right after it, and every unpaired one becomes U+FFFD.
+    internal static string UnescapeLenient(string raw)
+    {
+        var units = new System.Text.StringBuilder(raw.Length);
+        for (int i = 1; i < raw.Length - 1; i++)
+        {
+            char c = raw[i];
+            if (c != '\\') { units.Append(c); continue; }
+            char e = raw[++i];
+            switch (e)
+            {
+                case 'b': units.Append('\b'); break;
+                case 'f': units.Append('\f'); break;
+                case 'n': units.Append('\n'); break;
+                case 'r': units.Append('\r'); break;
+                case 't': units.Append('\t'); break;
+                case 'u':
+                    units.Append((char)Convert.ToUInt16(raw.Substring(i + 1, 4), 16));
+                    i += 4;
+                    break;
+                default: units.Append(e); break;   // " \ /
+            }
+        }
+        var s = units.ToString();
+        var result = new System.Text.StringBuilder(s.Length);
+        for (int i = 0; i < s.Length; i++)
+        {
+            if (char.IsSurrogatePair(s, i)) { result.Append(s, i, 2); i++; }
+            else if (char.IsSurrogate(s[i])) result.Append('�');
+            else result.Append(s[i]);
+        }
+        return result.ToString();
     }
 
     // Match TruncateUtf8's code-point limit without splitting a surrogate pair.
